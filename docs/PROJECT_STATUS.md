@@ -5,15 +5,16 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 4: task 14.4a capture-daemon tests)
+Last updated:      2026-09-28 (session 5: task 14.4b dashboard tests)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached, M2 on Linux only)
-Current phase:     Phase 14 — Release hardening (14.1 done for Windows, 14.2 done, 14.4a done)
+Current phase:     Phase 14 — Release hardening (14.1 done for Windows, 14.2 and 14.4 done)
 Current task:      none in progress
-Next task:         14.4b Automated tests for the dashboard
-Overall state:     Working system with a versioned, upgrade-safe database and an end-to-end
-                   tested capture daemon. Tests and the demo smoke test pass on Linux
-                   (Py 3.11 + 3.13); the owner's Windows laptop was green for 14.2 and has
-                   not run 14.4a yet. Not yet exercised: live capture on Windows, macOS, CI.
+Next task:         14.3a Lock file + CHANGELOG (the unblocked half of 14.3)
+Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
+                   tested capture daemon and an automatically tested dashboard (92 % line
+                   coverage). Linux: 245 tests pass (Py 3.11 + 3.13). Owner's Windows laptop:
+                   last run 231 + 2 expected skips (before 14.4b). Not yet exercised: live
+                   capture on Windows, macOS, CI.
 ```
 
 ## 1. Baseline assessment
@@ -30,9 +31,10 @@ Database        VERIFIED        WAL, indexes, retention; schema v1 in PRAGMA use
                                 ordered atomic migrations (ADR-018); owner-only files on POSIX
 Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS correlation
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
-Frontend        FUNCTIONAL      All views work (manual Playwright check); 0% automated tests
-Testing         FUNCTIONAL      233 tests, 83% line coverage; all pass on Linux (Py 3.11 + 3.13);
-                                Windows last run at 14.2; dashboard still 0% automated
+Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
+                                components.py 91 %); visuals still checked manually
+Testing         VERIFIED*       245 tests, 92% line coverage; all pass on Linux (Py 3.11 + 3.13);
+                                Windows last confirmed at 231 (before 14.4b); CI never run
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
                                 S-3 fuzz, S-6 documented, S-8 done; daemon ignores proxies
@@ -46,6 +48,12 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-28 s5 | `ruff check`; `ruff format --check` | Py 3.11 | clean / 81 files formatted |
+| 2026-09-28 s5 | `mypy --platform {linux,win32,darwin}` | mypy 1.20.2 and 2.3.1 | clean ×6 (59 files) |
+| 2026-09-28 s5 | `pytest` | Py 3.11.15 / Py 3.13.7 | 245 passed / 245 passed (~18 s / ~19 s); coverage 92 % (`dashboard.py` 0 → 96 %, `components.py` 0 → 91 %) |
+| 2026-09-28 s5 | `tests/test_dashboard.py` repeated 3× with `-W error::RuntimeWarning` | Py 3.11 | 12/12 each run (~9.7 s) |
+| 2026-09-28 s5 | Mutation check: 9 deliberate dashboard breakages (error banner, feed cap, live filter, live order, pause, polling fallback, include-local, dialog replacement, spinner on error) | Py 3.11 | each caught; original restored (diff clean) |
+| 2026-09-28 s5 | `scripts/smoke_test.py` | Py 3.11 | all checks passed |
 | 2026-09-28 s4 | `python -m compileall`; `ruff check`; `ruff format --check` | Py 3.11 / 3.13 | pass / clean / 80 files formatted |
 | 2026-09-28 s4 | `mypy --platform {linux,win32,darwin}` | mypy 1.20.2 and 2.3.1 | clean ×6 (59 files) |
 | 2026-09-28 s4 | `pytest` | Py 3.11.15 / Py 3.13.7 | 233 passed / 233 passed; coverage 83 % (`daemon.py` 96 %, `forwarder.py` 93 %) |
@@ -69,7 +77,8 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 | 2026-09-28 s1 | Throughput/latency benchmark (ROADMAP §I) | Linux sandbox | ≈ 5 400 events/s; `/api/stats` 71 ms @ 250 k rows |
 | 2026-09-28 s3 | `pytest` with 14.2 — **owner's Windows laptop** | Windows | 223 passed, 2 skipped (the two POSIX file-mode tests; expected) |
 | 2026-09-28 s3 | Smoke test with 14.2 on Windows | Windows | owner replied "good" after the request; output not shared |
-| — | 14.4a on Windows (pytest) | Windows | not run yet |
+| 2026-09-28 s4 | `pytest` with 14.4a — **owner's Windows laptop** | Windows | 231 passed, 2 skipped (POSIX file-mode tests; expected) in 12.7 s |
+| — | 14.4b dashboard tests on Windows | — | **not run yet** (expected: 243 passed, 2 skipped) |
 | — | `.github/workflows/ci.yml` on GitHub; live capture on Windows; anything on macOS | — | **not run** |
 
 ## 3. Completed
@@ -98,23 +107,38 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
     was delivered. Now a proxy-free opener (ADR-016 revisited; README §11 notes it).
   - Parser fuzz test (S-3): 2 400 random/mutated/truncated frames, deterministic.
   - `CaptureDaemon.stop()` (public, thread-safe) for tests and future service wrappers.
+- **14.4b Dashboard tests (session 5):**
+  - `tests/test_dashboard.py` (12 tests) using NiceGUI's user simulation
+    (`nicegui.testing.user_simulation`, part of NiceGUI — no new dependency, no browser,
+    no sockets). The page talks to the **real** API in-process (`httpx.ASGITransport`),
+    so the tests also guard the dashboard ↔ API contract.
+  - Covered: rendering of KPIs/feed/devices/countries, live events batched into the feed
+    (order, 200-row cap), risk filter for snapshot + live events, pause/resume,
+    WebSocket-down polling fallback, event and device dialogs (incl. empty states),
+    unreachable API (banner, "Offline", notifications, recovery), pipeline-state banners,
+    include-local switch, and `mount_dashboard` (served page + once-per-process guard, in
+    a subprocess because `ui.run_with` changes process-wide state).
+  - `dashboard.py`: two `.mark()` handles on the clickable tables (no behaviour change).
+  - No product bug found. Found and neutralised a test-only stall: on Python 3.11
+    NiceGUI's outbox can swallow its teardown cancellation (an `asyncio.wait_for` race
+    fixed in 3.12), costing 2 s per test; the harness lets the outbox go idle first.
 
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **14.4b Automated tests for the dashboard.** `dashboard.py` and `components.py` are at
-   0 % automated coverage (only manual Playwright checks). Fully unblocked.
-2. 14.3 Reproducible installs & release hygiene: lock file, CHANGELOG, plus LICENSE and
-   version label once decided.
+1. **14.3a Lock file + CHANGELOG.** Generate a pinned lock file for runtime + dev tools,
+   use it in CI, and start `CHANGELOG.md` from the work already recorded here. Unblocked
+   (LICENSE and the version label stay with the owner → 14.3b).
+2. 14.3b LICENSE + version label, once the owner decides.
 3. When the project is on GitHub: confirm the CI run (macOS coverage).
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
-| Windows re-run | `pytest` with this update (adds real-server daemon tests) | confirming 14.4a on Windows |
-| License | Choose a license (e.g. MIT, Apache-2.0, GPL-3.0, or "all rights reserved") | 14.3 |
-| Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3 |
+| License | Choose a license (e.g. MIT, Apache-2.0, GPL-3.0, or "all rights reserved") | 14.3b |
+| Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3b |
+| Windows re-run | `pytest` on the laptop with this build (expect 243 passed, 2 skipped) | confirming 14.4b on Windows |
 | CI on GitHub | Push the project to a GitHub repository | macOS verification; automatic checks on every change |
 | Windows live capture | Install Npcap, then `python run.py capture -i "Wi-Fi"` from an Administrator shell with the server running | M2 on Windows |
 | Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host) | M7 |
@@ -127,9 +151,8 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 **Important**
 - CI workflow never executed and macOS never tested → first push to GitHub.
 - Live capture never run on Windows (the owner's platform) → owner test with Npcap.
-- `dashboard.py`/`components.py` have 0 % automated coverage → 14.4b (next).
 - No lock file. Runtime installs and dev tools resolve to the newest compatible
-  versions; mypy 2.x already changed results once → 14.3.
+  versions; mypy 2.x already changed results once → 14.3a (next).
 
 **Nice-to-have**
 - A device's risk resets only after its window expires *and* it sends a new event, so a
@@ -142,8 +165,13 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 - `Database.initialize()` runs twice at server start (CLI pre-flight + lifespan); the second
   run is a no-op version check. Harmless; revisit only if start-up time matters.
 - `cli.py` 74 % and `logging_config.py` 40 % coverage.
-- The test suite now takes ~10 s (was ~5 s): the daemon tests start real servers. Fine;
-  revisit with an opt-in marker only if it grows much further.
+- The test suite now takes ~18 s (was ~10 s): dashboard tests ~9.7 s, daemon tests ~4.5 s.
+  Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
+- The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,
+  `_render_pipeline`) to avoid waiting on 2–5 s UI timers. Cheap to maintain; if the page
+  is refactored, prefer injectable intervals.
+- The dashboard tests depend on `nicegui.testing.user_simulation` (NiceGUI ≥ 2.x API).
+  A NiceGUI major upgrade may need harness changes; the lock file (14.3a) pins it.
 
 **Future**
 - Package named `app` (ADR-011) → rename before publishing a wheel (Phase 21).

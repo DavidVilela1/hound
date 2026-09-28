@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (14.4a done; next: 14.4b dashboard tests).
+> Last reviewed: 2026-09-28 (14.4 done; next: 14.3a lock file + CHANGELOG).
 
 ---
 
@@ -139,9 +139,9 @@ Examples for upcoming work:
 | 7 Risk engine | `app/risk` | VERIFIED | `tests/test_risk.py` — real-traffic tuning pending (16) |
 | 8 FastAPI | `app/api` | VERIFIED | `tests/test_api.py`, `/docs`, `/redoc` |
 | 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
-| 10 Dashboard | `app/frontend` | FUNCTIONAL | manual Playwright only; 0 % automated (14.4) |
+| 10 Dashboard | `app/frontend` | VERIFIED | `tests/test_dashboard.py` (NiceGUI user simulation vs. real API); visuals manual |
 | 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
-| 12 Testing & hardening | 209 tests, ruff + mypy clean (mypy also checked for win32/darwin) | FUNCTIONAL | executed on Linux only (Py 3.11 + 3.13); Windows/macOS via CI once on GitHub (14.1) |
+| 12 Testing & hardening | 245 tests, 92 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED (Linux) | Linux Py 3.11 + 3.13; Windows run by owner up to 14.4a; macOS via CI once on GitHub |
 | 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | Windows statements corrected in 14.1; not yet confirmed on a Windows machine |
 
 ### Phase 14 — Release hardening → M6 *(current)*
@@ -204,7 +204,8 @@ and whose installs are reproducible.
 #### 14.3 Reproducible installs & release hygiene
 *Sequencing note (2026-09-28): moved after 14.4 because two of its items wait for owner
 decisions (license, version label); 14.4 is fully unblocked. Order within M6 is otherwise
-unaffected.*
+unaffected. Split after 14.4: **14.3a** lock file + CHANGELOG (unblocked, ← next task);
+**14.3b** LICENSE + version label (owner decisions).*
 * **Tasks:** generated lock file (`requirements.lock` via `pip-compile` or `uv pip
   compile`, dev-only tool) used by CI; `CHANGELOG.md`; version policy (owner decision:
   keep 1.0.0 or re-label 0.9.0 until M6); **LICENSE** (owner decision); move `pytest` to
@@ -233,11 +234,18 @@ Split into two sessions (too large to verify properly in one):
 * Dropped from the plan: "move the smoke test into pytest" — CI already runs
   `scripts/smoke_test.py` directly (since 14.1), so it would only duplicate it.
 
-**14.4b Dashboard ← next task**
-* **Tasks:** automated test of the NiceGUI page (renders, live feed updates, event and
-  device dialogs, error banner when the API is unreachable) — NiceGUI's `User` testing
-  fixture if it works with `ui.run_with`, otherwise an optional Playwright check.
-* **Acceptance:** `dashboard.py` and `components.py` no longer at 0 % coverage.
+**14.4b Dashboard — DONE (2026-09-28)**
+* `tests/test_dashboard.py` (12 tests): `nicegui.testing.user_simulation` builds the real
+  `DashboardPage` (dependency injection made `ui.run_with` irrelevant for most tests)
+  against the **real** API over `httpx.ASGITransport`; live events enter through
+  `LiveEventStream.dispatch`, outages through a switchable transport. `mount_dashboard`
+  itself is tested in a subprocess (served page + once-per-process guard).
+* Covers render, live batching/cap/order, risk filter, pause, polling fallback, event and
+  device dialogs, error banner + recovery, pipeline-state banners, include-local switch.
+* Coverage: `dashboard.py` 0 → 96 %, `components.py` 0 → 91 %, total 83 → 92 %.
+  Mutation-checked with 9 deliberate breakages; each caught.
+* No Playwright dependency added; visual appearance (colours, layout, dark mode) remains a
+  manual check.
 * **Definition of done (Phase 14):** all four items done + M6 exit criteria met.
 
 ### Phase 15 — Observability & diagnostics
@@ -320,7 +328,7 @@ A task is **done** only when all apply:
 | Unit | parsing, normalisation, validation, each risk signal, blocklist, geo, config | pure, deterministic, event-time based; test packets use explicit MACs (`tests.conftest.eth()`) — host routing is disabled for the whole suite |
 | Integration | repositories on a temp SQLite file, processing worker, demo pipeline | temp dirs only; no network |
 | API | HTTP status codes, schemas, auth, WS, Host/Origin checks | FastAPI `TestClient` / `httpx.ASGITransport` |
-| E2E | server + demo + WS; (14.4) daemon split mode; dashboard render | free port, temp DB; opt-in marker |
+| E2E | server + demo + WS; daemon split mode (`test_daemon.py`); dashboard page vs. real API (`test_dashboard.py`) | free port or in-process ASGI, temp DB |
 | Manual | live capture per OS | recorded in `PROJECT_STATUS.md` with date/platform |
 
 **Fixtures to consolidate (14.4):** move inline packet builders into
@@ -329,9 +337,10 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28, after 14.4a): 233 tests, 83 % line coverage (`migrations.py` 100 %,
-`daemon.py` 96 %); gaps: `frontend/dashboard.py` & `components.py` 0 %, `cli.py` 74 %,
-`core/logging_config.py` 40 %. The suite takes ~10 s; the daemon tests start real servers (~4.5 s).
+Current numbers (2026-09-28, after 14.4b): 245 tests, 92 % line coverage (`migrations.py` 100 %,
+`daemon.py` 96 %, `dashboard.py` 96 %, `components.py` 91 %); gaps: `frontend/client.py` 68 %
+(WebSocket reconnect loop), `cli.py` 74 %, `core/logging_config.py` 40 %. The suite takes ~18 s
+(dashboard ~9.7 s, daemon ~4.5 s).
 
 ---
 

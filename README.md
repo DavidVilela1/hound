@@ -450,9 +450,12 @@ fallback, and resumes streaming automatically.
 ## 15. Testing
 
 ```bash
-pytest                         # unit, database and API tests
+pytest                         # unit, database, API, capture-daemon and dashboard tests
 python scripts/smoke_test.py   # end-to-end: starts demo mode and checks every layer
 ```
+
+No test needs root, internet access or a browser: the dashboard tests use
+NiceGUI's built-in user simulation against the real API, in-process.
 
 Development tools (lint, type check, dependency audit) are in
 `requirements-dev.txt`:

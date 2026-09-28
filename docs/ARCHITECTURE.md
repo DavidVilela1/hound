@@ -162,8 +162,11 @@ tested · extension points. File references are to the current code.
 * **In → out:** REST snapshots + WebSocket events → NiceGUI components.
 * **Failure modes:** API unreachable (error banner, retries); WebSocket down (polling
   fallback every 5 s); bursts (buffered, flushed every 0.5 s, feed capped at 200 rows).
-* **Tests:** pure helpers and API client in `tests/test_frontend.py`; page behaviour only
-  verified manually with Playwright — **0 % automated coverage of `dashboard.py`**.
+* **Tests:** pure helpers and API client in `tests/test_frontend.py`; page behaviour in
+  `tests/test_dashboard.py` (NiceGUI user simulation, real API over ASGI, live events via
+  `LiveEventStream.dispatch`). `DashboardPage` takes its API client and stream as
+  constructor arguments, which is what makes it testable without a server. Visual
+  appearance is checked manually.
 * **Extension points:** new tabs are self-contained panels on `DashboardPage`.
 
 ### 3.11 Composition & lifecycle — `app/services/runtime.py`, `app/api/app.py`, `app/cli.py`

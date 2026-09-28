@@ -136,11 +136,13 @@ class DashboardPage:
             self.feed_note = ui.label("").classes("hound-muted")
         self.feed_loading = ui.spinner(size="lg")
         self.feed_table = risk_table(FEED_COLUMNS, "id", "No events yet — waiting for traffic…", rows_per_page=25)
+        self.feed_table.mark("feed-table")  # stable handle for tests
         self.feed_table.on("rowClick", lambda e: self._open_event(row_from_click(e.args)))
         ui.label("Newest first · click a row for details").classes("hound-muted")
 
     def _devices_panel(self) -> None:
         self.devices_table = risk_table(DEVICE_COLUMNS, "ip", "No devices observed yet.", rows_per_page=20)
+        self.devices_table.mark("devices-table")
         self.devices_table.on("rowClick", lambda e: self._open_device(row_from_click(e.args)))
         ui.label(
             "Device risk score = highest event score within the device risk window. Click a device to inspect it."
