@@ -30,6 +30,7 @@ change their status or add a "Revisited" note.
 | 019 | Hash-checked, universal lock files generated with uv; CI installs the lock | Accepted |
 | 020 | Pipeline metrics as in-process JSON; the daemon reports its counters inside ingest batches | Accepted |
 | 021 | Allowlist: suppressed indicators stay visible; device entries never hide blocklist hits | Accepted |
+| 022 | Risk settings in a strict TOML file; explicitly set environment values override it | Accepted |
 
 ---
 
@@ -295,3 +296,27 @@ change their status or add a "Revisited" note.
 * **Consequences:** behaviour tracking still records allowlisted traffic (windows are
   unchanged); reload needs a restart until 16c; destination-based entries (e.g. "any
   device → my NAS on port 445") are not supported yet.
+
+## ADR-022 — Risk settings file: strict TOML, environment overrides, refuse on error
+* **Context:** tuning during the field trial needs every weight and threshold adjustable
+  without editing code. Thresholds and lists were already `HOUND_RISK_*` settings;
+  weights and domain heuristics were code only.
+* **Options:** more environment variables (≈ 25 more, flat, no structure); a TOML file
+  read with stdlib `tomllib`; YAML/JSON (a dependency, or no comments).
+* **Chosen:** `config/risk.toml` (`HOUND_RISK_CONFIG_PATH`), sections `levels`,
+  `behaviour`, `domains`, `ports`, `dns`, `weights`, parsed into Pydantic models with
+  `extra="forbid"` and range checks. Precedence: defaults < file < settings that were
+  **explicitly** set (`Settings.model_fields_set`: environment, `.env`, CLI). An invalid
+  file stops `serve` with one line and exit 2 (like invalid environment values) and
+  is a `doctor` failure. The shipped file lists every default, commented out; a test
+  uncomments it and asserts equality with the code defaults. `.env.example` keeps the
+  `HOUND_RISK_*` lines commented, because a copied `.env` would otherwise pin every value
+  and make file edits silently ineffective (a test guards this too).
+* **Reason:** one readable, commented place for tuning; no dependency; strictness turns
+  typos into visible errors; letting explicit environment values win keeps existing
+  setups working and matches 12-factor expectations.
+* **Consequences:** two sources for the thresholds (documented; `doctor` lists
+  overrides). Changes need a restart until 16c. Adding a signal means updating
+  `RiskWeights`, the `[weights]` model and the shipped file (the drift test enforces it).
+  Found while building it: a pattern-based key mapping sent `nxdomain_burst` to a
+  non-existent field; mappings are explicit now.

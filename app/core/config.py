@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     dns_cache_ttl_seconds: int = Field(default=3_600, ge=10, le=86_400)
 
     # --- Risk engine ------------------------------------------------------
+    risk_config_path: Path = Path("config/risk.toml")
     risk_suspicious_threshold: int = Field(default=25, ge=1, le=100)
     risk_dangerous_threshold: int = Field(default=70, ge=1, le=100)
     risk_window_seconds: int = Field(default=60, ge=5, le=3_600)

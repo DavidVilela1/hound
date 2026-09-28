@@ -83,6 +83,7 @@ def cmd_serve(args: argparse.Namespace, settings: Settings) -> int:
 
     from app.api.app import create_app
     from app.database.engine import DatabaseError
+    from app.risk.config import RiskConfigError
     from app.services.runtime import HoundRuntime, RunMode
 
     if not settings.is_loopback_bind:
@@ -102,7 +103,11 @@ def cmd_serve(args: argparse.Namespace, settings: Settings) -> int:
             )
     else:
         mode = RunMode.IDLE
-    runtime = HoundRuntime(settings, mode, interface=args.interface)
+    try:
+        runtime = HoundRuntime(settings, mode, interface=args.interface)
+    except RiskConfigError as exc:
+        logger.error("Cannot start: %s", exc)
+        return 2
     try:
         # Pre-flight before the web server starts, so a refusal (e.g. a database from a newer
         # Hound) is one clear log line instead of a framework traceback.
@@ -160,7 +165,11 @@ def cmd_interfaces() -> int:
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     from app.services.doctor import exit_code, render, run_checks
 
-    checks = run_checks(settings, interface=args.interface)
+    logging.disable(logging.INFO)  # the report is the output; only warnings/errors from the checks
+    try:
+        checks = run_checks(settings, interface=args.interface)
+    finally:
+        logging.disable(logging.NOTSET)
     print(render(checks))
     return exit_code(checks)
 

@@ -5,17 +5,18 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 10: task 16a allowlist)
+Last updated:      2026-09-28 (session 11: task 16b risk settings file)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
-Current phase:     Phase 16 — Field trial & detection tuning (16a done); Phase 14's last
+Current phase:     Phase 16 — Field trial & detection tuning (16a, 16b done); Phase 14's last
                    items (licence, version label) wait on the owner
 Current task:      none in progress
-Next task:         16b risk weights/thresholds from an optional TOML file
+Next task:         16c reload blocklist, allowlist and risk settings without a restart
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon, an automatically tested dashboard, reproducible
                    hash-checked installs, a read-only `doctor` setup check and per-stage
                    loss metrics (`/api/metrics`), a reproducible benchmark and an
-                   owner allowlist (94 % line coverage). Linux: 334 tests pass
+                   owner allowlist and a risk settings file (94 % line coverage). Linux:
+                   352 tests pass
                    (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
                    skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
                    capture works on Windows (split mode, Npcap, "Wi-Fi").
@@ -38,7 +39,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       334 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       352 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -103,6 +104,11 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-28 s11 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 352 / 352 / 352 passed; clean; smoke all passed; `risk/config.py` 99 % |
+| 2026-09-28 s11 | Drift guard (uncomment every value in `config/risk.toml`) while building | Py 3.11 | **caught 2 real problems**: a prose comment line looked like a setting (file would break when "uncommented"), and `[behaviour] nxdomain_burst` mapped to a non-existent field — both fixed |
+| 2026-09-28 s11 | Mutation check (6: typos ignored, environment not winning, wrong key mapping, CLI traceback instead of exit 2, doctor skipping the file, `.env.example` pinning a value) | Py 3.11 | each caught. First attempt hung: with typos ignored, the CLI test started a real server → test now replaces `uvicorn.run` with a failing stub |
+| 2026-09-28 s11 | **Demo mode, same seed: defaults vs `[weights] high_entropy_domain = 0, risky_tld = 0`** | Linux, lock venv 3.13 | entropy/TLD points on 7/2 events → 0/0; blocklist hits 2 → 2; dangerous 5 → 5; suspicious 23 → 22; "Risk settings file loaded values=2" logged |
+| 2026-09-28 s11 | Invalid file (`suspicious = 90` > default dangerous 70): `run.py` and `run.py doctor` | Linux | server: one "Cannot start: … suspicious < dangerous" line, exit 2; doctor: `[FAIL] Risk settings`, 1 problem |
 | 2026-09-28 s10 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 334 / 334 / 334 passed; clean; smoke all passed; coverage 94 % (`risk/engine.py` 100 %, `allowlist.py` 96 %) |
 | 2026-09-28 s10 | Mutation check of `tests/test_allowlist.py` (7 breakages: device entry hides blocklist, policy not applied, silent suppression, bare TLD accepted, domain not matched, file not wired, no broad-range warning) | Py 3.11 | each caught; originals restored |
 | 2026-09-28 s10 | **Demo mode, same seed, without vs. with allowlist `192.168.1.0/24`** (10 s at 40 events/s) | Linux, lock venv 3.13 | without: 28 flagged (26 without a blocklist hit); with: only the 2 blocklist hits flagged (still DANGEROUS), 69 events carry an `ALLOWLISTED` reason; "Allowlist loaded devices=1" logged |
@@ -228,16 +234,30 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   are removed from the score instead, so score, level and device aggregates cannot
   disagree (ADR-021).
 
+- **16b Risk settings file (session 11):** `config/risk.toml` (`HOUND_RISK_CONFIG_PATH`),
+  `load_risk_file()` + `RiskConfig.from_settings()` in `app/risk/config.py` (ADR-022):
+  sections levels/behaviour/domains/ports/dns/weights, strict (unknown keys and bad
+  ranges rejected with the key named); precedence defaults < file < explicitly set
+  `HOUND_RISK_*`/`HOUND_TRUSTED_DNS_SERVERS`; `RiskConfigError` → `serve` exits 2 before
+  the web server starts; new `doctor` check (11 checks) that also lists environment
+  overrides; `doctor` output no longer includes INFO log lines. `.env.example` now keeps
+  the risk variables commented (a copied `.env` would otherwise silently override the
+  file). Shipped file = every default, commented; drift-guard test. Test fixture uses an
+  absent risk file. `tests/test_risk_config.py` (18). README §8, ARCHITECTURE §3.6,
+  ADR-022, CHANGELOG.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **16b Risk settings file.** Load signal weights and thresholds from an optional TOML
-   file (stdlib `tomllib`, no dependency), validated, with defaults unchanged when absent;
-   today they can only be changed through `HOUND_RISK_*` variables (thresholds) or code
-   (weights). Needed to tune during the field trial without editing code. Unblocked.
-2. 16c blocklist/allowlist reload without restart.
+1. **16c Reload without restart.** Re-read the blocklist, allowlist and risk settings on
+   request (e.g. `POST /api/admin/reload`, token-protected like ingest, or a dashboard
+   button), swapping them atomically on the processing thread; an invalid file keeps the
+   old settings and reports why. Makes field-trial tuning a quick loop. Unblocked.
+2. 16d field trial + tuning (needs the owner's monitoring position).
 3. 14.3b LICENSE + version label, once the owner decides.
+4. Owner: if an older `.env` was copied from `.env.example`, remove its `HOUND_RISK_*`
+   lines (or `python run.py doctor` shows them as overrides).
 4. Owner: run `python scripts/benchmark.py` on the Windows laptop once, to record a
    baseline for the machine that will actually run Hound.
 
@@ -293,7 +313,7 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 - Encrypted DNS (DoH/DoT/DoQ) hides domain names.
 - Risk levels are heuristics, not malware detection; not yet tuned on real traffic.
 - Devices are identified by IP address.
-- Allowlist changes need a restart (16c); entries match domains or source devices only —
+- Allowlist and risk-settings changes need a restart (16c); entries match domains or source devices only —
   "any device → this destination" (e.g. SMB to the owner's NAS) is not expressible yet.
 - Single process, single user, localhost only; no dashboard authentication.
 - Live capture verified on Linux (loopback) and Windows (Wi-Fi, owner's report); macOS not

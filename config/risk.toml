@@ -1,0 +1,66 @@
+# Hound risk settings
+# -------------------
+# Every value below is commented out and shows the built-in default. To change one,
+# remove the leading "# " on that line (keep the [section] line above it) and restart.
+#
+# Precedence: built-in defaults < this file < HOUND_RISK_* / HOUND_TRUSTED_DNS_SERVERS
+# settings you set explicitly (environment or .env).
+# Unknown sections or keys are errors (a typo must not silently do nothing); Hound then
+# refuses to start and names the problem. `python run.py doctor` checks this file too.
+#
+# The score is the sum of the points of every signal that fired, capped at 100.
+# Each event's reasons in the dashboard/API show exactly which signals fired.
+
+[levels]
+# Score at which an event becomes SUSPICIOUS / DANGEROUS (1-100, suspicious < dangerous).
+# suspicious = 25
+# dangerous = 70
+
+[behaviour]
+# Sliding window for per-device behaviour, in seconds (5-3600).
+# window_seconds = 60
+# Connection attempts to the same destination IP and port within the window.
+# repeated_attempts = 15
+# Distinct ports on one host within the window.
+# port_scan = 15
+# Distinct hosts on your local network contacted within the window.
+# host_sweep = 20
+# NXDOMAIN (non-existent domain) answers within the window.
+# nxdomain_burst = 10
+
+[domains]
+# Shannon entropy (bits/character) above which a label looks machine-generated.
+# entropy_threshold = 3.5
+# Labels shorter than this are never judged on entropy.
+# entropy_min_label_length = 12
+# A domain is "long" at this many characters, or with more labels than max_labels.
+# long_domain_length = 75
+# max_labels = 6
+# risky_tlds = ["cf", "click", "country", "gq", "ml", "mov", "tk", "top", "work", "xyz", "zip"]
+# unusual_query_types = ["ANY", "NULL", "TXT"]
+
+[ports]
+# Remote ports that add the suspicious-port points (public destinations only).
+# suspicious = [23, 135, 139, 445, 1433, 3389, 4444, 5900, 6667]
+# Ports that never count as "uncommon".
+# common = [53, 80, 123, 443, 465, 587, 853, 993, 995, 5222, 5223, 8080, 8443]
+
+[dns]
+# Your resolvers; queries to any other resolver add points. Empty = signal off.
+# trusted_servers = []          # e.g. ["192.168.1.1"]
+
+[weights]
+# Points each signal adds (0-100); 0 switches a signal's contribution off.
+# blocklisted_domain = 70
+# port_scan = 40
+# host_sweep = 40
+# nxdomain_burst = 25
+# suspicious_port = 25
+# repeated_attempts = 20
+# high_entropy_domain = 20
+# untrusted_resolver = 15
+# long_domain = 10
+# risky_tld = 10
+# unusual_query_type = 10
+# uncommon_port = 5
+# direct_ip_connection = 5

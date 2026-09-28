@@ -11,6 +11,10 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **Risk settings file** (`config/risk.toml`, `HOUND_RISK_CONFIG_PATH`): every weight and
+  threshold of the risk engine in one commented TOML file (stdlib `tomllib`), strictly
+  validated; explicitly set `HOUND_RISK_*` values override it; an invalid file stops the
+  server with one clear line; `doctor` checks it (ADR-022).
 - **Allowlist** (`config/allowlist.txt`, `HOUND_ALLOWLIST_PATH`): domains and devices
   (IP or CIDR) whose indicators are not counted. Suppressed indicators stay visible in a
   0-point `ALLOWLISTED` reason; an allowlisted device's blocklist hits still count
@@ -48,6 +52,9 @@ Until then everything is listed under **Unreleased**.
   dependency audit) and `requirements-dev.txt` with ruff, mypy and pip-audit (ADR-017).
 
 ### Changed
+- `.env.example` now keeps the `HOUND_RISK_*` variables commented out: copying it to
+  `.env` no longer pins every risk value (which would override `config/risk.toml`).
+- `python run.py doctor` prints only warnings/errors from the log, not INFO lines.
 - Installation instructions use `pip install -r requirements.lock`;
   `requirements.txt` remains the list of supported version ranges.
 - README Windows venv command uses `py -3` (any installed Python 3.11+) instead of

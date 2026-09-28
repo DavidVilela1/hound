@@ -217,8 +217,9 @@ Other useful settings (full list with comments in `.env.example`):
 `HOUND_ALLOWED_HOSTS`, `HOUND_API_URL`, `HOUND_INGEST_TOKEN`,
 `HOUND_ALLOWLIST_PATH`, `HOUND_GEO_MODE` (`simulated` | `mapping_only`), `HOUND_GEO_RANGES_PATH`,
 `HOUND_TRUSTED_DNS_SERVERS`, `HOUND_RETENTION_MAX_EVENTS`,
-`HOUND_QUEUE_MAX_SIZE`, `HOUND_LOG_FORMAT` (`text` | `json`) and all
-`HOUND_RISK_*` thresholds. Relative paths are resolved against the project
+`HOUND_QUEUE_MAX_SIZE`, `HOUND_LOG_FORMAT` (`text` | `json`),
+`HOUND_RISK_CONFIG_PATH` and the `HOUND_RISK_*` thresholds (see *Risk settings*
+below). Relative paths are resolved against the project
 directory, never the current working directory, so no machine-specific paths
 are needed. Invalid values stop start-up with a clear message.
 `HOUND_DATABASE_URL` is a URL: if you write an explicit path containing `%`,
@@ -237,6 +238,19 @@ boundaries: the entry `example.com` matches `example.com`, `www.example.com`,
 `EXAMPLE.COM.` and `a.b.example.com`, but **not** `notexample.com` or
 `example.com.evil.net`. `www.` is not stripped, so an entry `www.example.com`
 does not block `example.com`.
+
+**Risk settings** (`config/risk.toml`): every weight and threshold the risk
+engine uses — score levels, behaviour windows and counts, domain heuristics
+(entropy, length, risky TLDs, unusual query types), port lists, trusted DNS
+resolvers and the points per signal (`0` switches a signal off). The shipped
+file lists every setting commented out with its built-in default; remove the
+`# ` in front of a value to change it and restart. Unknown sections or keys are
+errors — a typo must not silently do nothing — and an invalid file stops
+start-up with one line naming the problem (`python run.py doctor` checks it
+too). **Precedence:** built-in defaults < `config/risk.toml` < `HOUND_RISK_*` /
+`HOUND_TRUSTED_DNS_SERVERS` values you set explicitly (environment or `.env`).
+`.env.example` keeps those variables commented so that copying it does not
+override the file; `doctor` shows which values the environment overrides.
 
 **Allowlist** (`config/allowlist.txt`, optional): things you have checked and
 trust, so their indicators stop being counted — for example a CDN whose
@@ -319,7 +333,8 @@ python run.py doctor                 # add -i "Wi-Fi" (or eth0, en0) to check an
 packages against `requirements.lock`, the capture driver (Npcap on Windows,
 libpcap elsewhere), privileges, the interface, the bind address, whether the
 port is free or already used by a running Hound, cloud-synced data folders,
-the database (readable, schema version, upgrades) and the ingest token. Each
+the database (readable, schema version, upgrades), the ingest token and the
+risk settings file. Each
 problem comes with the fix. It exits with status 1 if something would stop
 Hound from working, so it can also be scripted.
 
@@ -661,6 +676,7 @@ hound/
 ├── config/
 │   ├── blocklist.txt          # sample blocklist (reserved TLDs only)
 │   ├── allowlist.txt          # your trusted domains/devices (empty by default)
+│   ├── risk.toml              # signal weights and thresholds (all defaults, commented)
 │   └── geo_ranges.csv         # illustrative CIDR → country table
 ├── data/                      # SQLite DB and ingest token (created at runtime)
 ├── docs/                      # status, roadmap, architecture, decision records

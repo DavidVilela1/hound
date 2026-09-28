@@ -414,6 +414,28 @@ def check_ingest_token(settings: Settings, platform: str = sys.platform) -> Chec
     return Check("Ingest token", Status.OK, f"{path}")
 
 
+def check_risk_settings(settings: Settings) -> Check:
+    """The risk settings file parses and combines with the environment into a valid config."""
+    from app.risk.config import RiskConfig, RiskConfigError, explicit_environment, load_risk_file
+
+    path = settings.resolve_path(settings.risk_config_path)
+    try:
+        values = load_risk_file(path)
+        RiskConfig.from_settings(settings)
+    except RiskConfigError as exc:
+        return Check("Risk settings", Status.FAIL, str(exc), f"Fix {path.name} (or rename it to use the defaults).")
+    count = len(values) - ("weights" in values) + len(values.get("weights", {}))
+    detail = f"{path.name}: {count} value(s) changed from the defaults" if count else "built-in defaults"
+    overridden = sorted(explicit_environment(settings))
+    if overridden:
+        return Check(
+            "Risk settings",
+            Status.INFO,
+            f"{detail}; overridden by environment/.env: {', '.join(overridden)}",
+        )
+    return Check("Risk settings", Status.OK, detail)
+
+
 # ------------------------------------------------------------------------------ orchestration
 def run_checks(settings: Settings, interface: str | None = None) -> list[Check]:
     from app.ingestion.capture import default_interface, list_interfaces
@@ -430,6 +452,7 @@ def run_checks(settings: Settings, interface: str | None = None) -> list[Check]:
         check_storage_location(settings),
         check_database(settings),
         check_ingest_token(settings),
+        check_risk_settings(settings),
     ]
 
 

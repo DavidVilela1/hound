@@ -120,8 +120,9 @@ tested · extension points. File references are to the current code.
 ### 3.6 Risk engine — `app/risk/`
 * **Responsibility:** deterministic, explainable scoring (ADR-009).
 * **In → out:** `(NetworkEvent, Enrichment)` → `RiskAssessment(score, level, reasons)`.
-* **Depends on:** `RiskConfig` (from settings), `DeviceBehaviorTracker` (bounded,
-  event-time sliding windows).
+* **Depends on:** `RiskConfig` (defaults < `config/risk.toml` < explicitly set
+  `HOUND_RISK_*` settings; `RiskConfig.from_settings`, ADR-022), `DeviceBehaviorTracker`
+  (bounded, event-time sliding windows).
 * **Failure modes:** state lost on restart (by design, windows are ≤ minutes); memory
   bounded by device/entry caps.
 * **Allowlist policy** (`apply_allowlist`, ADR-021): after the signals run, indicators
@@ -129,8 +130,14 @@ tested · extension points. File references are to the current code.
   removed from the score and listed in one 0-point `ALLOWLISTED` reason.
 * **Tests:** `tests/test_risk.py` (every signal, thresholds, cap, determinism, bounds),
   `tests/test_allowlist.py` (policy).
-* **Extension points:** add a class implementing `RiskSignal`; weights/thresholds are
-  data (`RiskWeights`, `RiskConfig`). Target: rules loaded from a TOML file (16b).
+* **Configuration file:** `load_risk_file()` parses `config/risk.toml` with stdlib
+  `tomllib` into strict Pydantic sections (unknown keys rejected, ranges checked);
+  `RiskConfigError` stops `serve` before the web server starts (exit 2) and is reported
+  by `doctor`. `tests/test_risk_config.py` includes a drift guard: uncommenting every
+  value in the shipped file must reproduce `RiskConfig()` exactly.
+* **Extension points:** add a class implementing `RiskSignal` (and its weight to
+  `RiskWeights`, the `[weights]` section and the shipped file — the drift guard fails
+  until all three agree).
 
 ### 3.7 Persistence — `app/database/`, `app/services/store.py`
 * **Responsibility:** atomically store events and update device aggregates; retention.
