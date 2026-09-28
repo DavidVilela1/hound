@@ -5,14 +5,16 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 5: task 14.4b dashboard tests)
+Last updated:      2026-09-28 (session 6: task 14.3a lock files + CHANGELOG)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached, M2 on Linux only)
-Current phase:     Phase 14 — Release hardening (14.1 done for Windows, 14.2 and 14.4 done)
+Current phase:     Phase 14 — Release hardening (14.1 Windows, 14.2, 14.3a, 14.4 done;
+                   remaining items wait on the owner) → Phase 15 starts meanwhile
 Current task:      none in progress
-Next task:         14.3a Lock file + CHANGELOG (the unblocked half of 14.3)
+Next task:         15a `hound doctor` environment diagnostic
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon and an automatically tested dashboard (92 % line
-                   coverage). Linux: 245 tests pass (Py 3.11 + 3.13). Owner's Windows laptop:
+                   coverage) and reproducible, hash-checked installs. Linux: 252 tests pass
+                   (Py 3.11 + 3.13, from the lock). Owner's Windows laptop:
                    last run 231 + 2 expected skips (before 14.4b). Not yet exercised: live
                    capture on Windows, macOS, CI.
 ```
@@ -22,7 +24,7 @@ Overall state:     Working system with a versioned, upgrade-safe database, an en
 ```text
 AREA            STATUS          NOTES
 ------------------------------------------------------------------------------------------
-Architecture    VERIFIED        Layered modular monolith; module-import check clean; ADR-001..018
+Architecture    VERIFIED        Layered modular monolith; module-import check clean; ADR-001..019
 Ingestion       VERIFIED*       Parser/capture/daemon/demo; live capture on Linux lo only.
                                 Daemon split mode tested end to end (96%); parser fuzzed
 Event model     VERIFIED        Frozen Pydantic NetworkEvent; used by all sources
@@ -33,14 +35,14 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       245 tests, 92% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       252 tests, 92% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows last confirmed at 231 (before 14.4b); CI never run
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
                                 S-3 fuzz, S-6 documented, S-8 done; daemon ignores proxies
 Documentation   FUNCTIONAL      README covers upgrades/refusals; Windows guidance owner-checked
-Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file, LICENSE,
-                                CHANGELOG; version says 1.0.0 before any release
+Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELOG, CI installs
+                                the lock; missing: LICENSE, version label (owner) → 14.3b
 ```
 `*` = verified with the caveat in the notes.
 
@@ -48,6 +50,12 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-28 s6 | `uv pip compile … --only-binary :all:` against the locks for Windows x86-64, macOS x86-64 + arm64, Linux x86-64 × Py 3.11/3.12/3.13/3.14 | uv 0.8.17 | all 16 resolve: a wheel exists for every pin |
+| 2026-09-28 s6 | Fresh venvs, `pip install -r requirements-dev.lock` (plain pip, hash mode), then compileall, ruff check + format, mypy, pytest, smoke test | Py 3.11.15 / Py 3.13.7 | `pip check` ok; all clean; 252 passed / 252 passed; smoke all passed |
+| 2026-09-28 s6 | Fresh venv, `pip install -r requirements.lock` (runtime only, pip 24.0) then pytest + smoke | Py 3.11 | 252 passed; smoke all passed; ruff absent as intended |
+| 2026-09-28 s6 | `pip-audit -r requirements{,-dev}.lock --require-hashes --disable-pip` | pip-audit 2.10.1 | no known vulnerabilities (both) |
+| 2026-09-28 s6 | Mutation check of `tests/test_dependency_locks.py` (6 breakages: range raised, requirement added, dev pin drift, hashes removed, dev tool added, different generator flags) | Py 3.11 | each caught; files restored (cmp clean) |
+| 2026-09-28 s6 | `actionlint` on the updated workflow | 1 file | no issues |
 | 2026-09-28 s5 | `ruff check`; `ruff format --check` | Py 3.11 | clean / 81 files formatted |
 | 2026-09-28 s5 | `mypy --platform {linux,win32,darwin}` | mypy 1.20.2 and 2.3.1 | clean ×6 (59 files) |
 | 2026-09-28 s5 | `pytest` | Py 3.11.15 / Py 3.13.7 | 245 passed / 245 passed (~18 s / ~19 s); coverage 92 % (`dashboard.py` 0 → 96 %, `components.py` 0 → 91 %) |
@@ -78,7 +86,7 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 | 2026-09-28 s3 | `pytest` with 14.2 — **owner's Windows laptop** | Windows | 223 passed, 2 skipped (the two POSIX file-mode tests; expected) |
 | 2026-09-28 s3 | Smoke test with 14.2 on Windows | Windows | owner replied "good" after the request; output not shared |
 | 2026-09-28 s4 | `pytest` with 14.4a — **owner's Windows laptop** | Windows | 231 passed, 2 skipped (POSIX file-mode tests; expected) in 12.7 s |
-| — | 14.4b dashboard tests on Windows | — | **not run yet** (expected: 243 passed, 2 skipped) |
+| — | 14.4b + 14.3a on Windows | — | **not run yet** (expected: 250 passed, 2 skipped) |
 | — | `.github/workflows/ci.yml` on GitHub; live capture on Windows; anything on macOS | — | **not run** |
 
 ## 3. Completed
@@ -122,23 +130,40 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
   - No product bug found. Found and neutralised a test-only stall: on Python 3.11
     NiceGUI's outbox can swallow its teardown cancellation (an `asyncio.wait_for` race
     fixed in 3.12), costing 2 s per test; the harness lets the outbox go idle first.
+- **14.3a Lock files + CHANGELOG (session 6):**
+  - `requirements.lock` / `requirements-dev.lock`: universal (one file for all OSes,
+    markers where needed), hash-checked, generated with `uv pip compile` (ADR-019). The dev
+    lock is constrained by the runtime lock, so shared pins are identical.
+  - CI: test matrix installs `requirements-dev.lock`; audit job audits both locks; new
+    non-blocking job runs the newest versions the ranges allow.
+  - `tests/test_dependency_locks.py` (7 tests): locks within ranges, every pin hashed,
+    runtime pins identical in both locks, generation command recorded.
+  - `CHANGELOG.md` (Unreleased + initial build), README install/update sections, ADR-019,
+    ADR-017 revisited.
+  - README: Windows venv command `py -3` instead of `py -3.11` (the owner's machine has no
+    3.11; the old command failed).
+  - Note: the lock resolves newer versions than the previous dev environment (e.g.
+    uvicorn 0.46 → 0.54, pydantic-settings 2.14 → 2.15); validated in fresh environments.
 
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **14.3a Lock file + CHANGELOG.** Generate a pinned lock file for runtime + dev tools,
-   use it in CI, and start `CHANGELOG.md` from the work already recorded here. Unblocked
-   (LICENSE and the version label stay with the owner → 14.3b).
+1. **15a `hound doctor`.** A read-only command that checks Python version, installed
+   package versions vs. the lock, Scapy + libpcap/Npcap availability, privileges, the
+   chosen interface, port availability, data-directory/database writability and token
+   presence, and prints one actionable line per problem. Unblocked; directly prepares the
+   owner's Windows live-capture test (M2 on Windows), the main blocked item.
 2. 14.3b LICENSE + version label, once the owner decides.
 3. When the project is on GitHub: confirm the CI run (macOS coverage).
+4. 15b `/api/metrics`; 15c commit the benchmark script.
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
 | License | Choose a license (e.g. MIT, Apache-2.0, GPL-3.0, or "all rights reserved") | 14.3b |
 | Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3b |
-| Windows re-run | `pytest` on the laptop with this build (expect 243 passed, 2 skipped) | confirming 14.4b on Windows |
+| Windows re-run | `pip install -r requirements.lock`, then `pytest` on the laptop (expect 250 passed, 2 skipped) | confirming 14.4b + 14.3a on Windows |
 | CI on GitHub | Push the project to a GitHub repository | macOS verification; automatic checks on every change |
 | Windows live capture | Install Npcap, then `python run.py capture -i "Wi-Fi"` from an Administrator shell with the server running | M2 on Windows |
 | Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host) | M7 |
@@ -151,8 +176,8 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 **Important**
 - CI workflow never executed and macOS never tested → first push to GitHub.
 - Live capture never run on Windows (the owner's platform) → owner test with Npcap.
-- No lock file. Runtime installs and dev tools resolve to the newest compatible
-  versions; mypy 2.x already changed results once → 14.3a (next).
+- Locked versions only move when someone re-locks; the audit job and the non-blocking
+  newest-versions CI job are the signals (both inert until the project is on GitHub).
 
 **Nice-to-have**
 - A device's risk resets only after its window expires *and* it sends a new event, so a
@@ -195,7 +220,7 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 
 ## 9. How to verify this file is still true
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.lock
 python -m compileall -q app tests scripts run.py
 ruff check app tests scripts run.py
 mypy

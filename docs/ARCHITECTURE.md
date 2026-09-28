@@ -211,7 +211,7 @@ Verified on 2026-09-28: every module imports standalone (no circular imports), a
 | Topic | Current | Target |
 |---|---|---|
 | Python | 3.11+; suite executed on 3.11.15 and 3.13.7 (Linux); CI workflow covers 3.11/3.13 on Linux, Windows, macOS (ADR-017) | CI green on every push |
-| Environment | `venv` + `requirements.txt` (ranges) | plus a **lock file** (`requirements.lock`, generated) for reproducible installs |
+| Environment | `venv` + `requirements.lock` (hash-checked, universal; generated from the ranges in `requirements.txt`, ADR-019) | unchanged |
 | Entry points | `python run.py`, `python -m app`, `hound` (editable install) | unchanged |
 | Process model | 1 server process; optional 1 capture daemon | unchanged; optional OS service units (Phase 21) |
 | Configuration | `HOUND_*` env / `.env` / CLI, validated by Pydantic (ADR-010) | unchanged; add `hound config check` diagnostic |

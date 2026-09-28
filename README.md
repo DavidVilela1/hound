@@ -162,23 +162,32 @@ source .venv/bin/activate
 Windows (PowerShell):
 
 ```powershell
-py -3.11 -m venv .venv
+py -3 -m venv .venv          # any installed Python 3.11 or newer (py -0 lists them)
 .venv\Scripts\Activate.ps1
 ```
 
 ## 7. Dependency installation
 
 ```bash
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements.lock
 # optional: installs the `hound` command
 pip install -e .
 ```
 
-`requirements.txt` contains only packages the code uses: FastAPI, Uvicorn,
-Pydantic, pydantic-settings, SQLAlchemy, Scapy, NiceGUI, httpx, websockets and
-pytest. The platform capture library (libpcap/Npcap) is **not** a pip package —
-see [Requirements](#4-requirements).
+`requirements.lock` pins the exact versions CI tests, with SHA-256 hashes that
+pip checks on download, so every install gets the same, verified packages.
+Ready-made wheels exist for every pinned version on Windows, macOS and Linux for
+Python 3.11–3.14, so nothing needs compiling. `requirements.txt` holds the underlying
+version *ranges*; `pip install -r requirements.txt` also works, but may pick
+newer, untested releases.
+
+The packages are only what the code uses: FastAPI, Uvicorn, Pydantic,
+pydantic-settings, SQLAlchemy, Scapy, NiceGUI, httpx, websockets and pytest.
+The platform capture library (libpcap/Npcap) is **not** a pip package — see
+[Requirements](#4-requirements).
+
+If pip reports *"hashes are required"* or a hash mismatch, the download was
+altered or incomplete: retry, and do not bypass the check.
 
 ## 8. Configuration
 
@@ -458,18 +467,34 @@ No test needs root, internet access or a browser: the dashboard tests use
 NiceGUI's built-in user simulation against the real API, in-process.
 
 Development tools (lint, type check, dependency audit) are in
-`requirements-dev.txt`:
+`requirements-dev.txt`, locked in `requirements-dev.lock`:
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.lock
 ruff check app tests scripts run.py
 mypy
-pip-audit -r requirements.txt
+pip-audit -r requirements.lock --require-hashes --disable-pip
 ```
 
 `.github/workflows/ci.yml` runs all of these, plus the smoke test, on Linux,
 Windows and macOS with Python 3.11 and 3.13 for every push and pull request
-once the project is on GitHub.
+once the project is on GitHub. A separate, non-blocking job installs the newest
+versions the ranges allow, to warn before a new release breaks Hound.
+
+### Updating dependencies
+
+Edit the ranges in `requirements.txt` / `requirements-dev.txt`, then regenerate
+both lock files with [uv](https://docs.astral.sh/uv/) (a maintainer tool, not
+needed to run Hound; `pip install uv`):
+
+```bash
+uv pip compile requirements.txt --universal --python-version 3.11 --generate-hashes -o requirements.lock
+uv pip compile requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.lock -o requirements-dev.lock
+```
+
+Add `--upgrade` to move to the newest allowed versions. Then run the full
+checks; `tests/test_dependency_locks.py` fails if a lock no longer matches its
+ranges, lost its hashes, or the two locks disagree.
 
 The suite (200+ tests) needs no root privileges and no real network traffic;
 packets are synthesised with Scapy and Scapy's sniffer is replaced by a fake
@@ -578,8 +603,11 @@ hound/
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml             # pytest/ruff/mypy config, optional `hound` command
-├── requirements.txt
+├── requirements.txt           # supported version ranges
+├── requirements.lock          # exact, hash-checked versions (generated; install this)
 ├── requirements-dev.txt       # ruff, mypy, pip-audit (development only)
+├── requirements-dev.lock      # the above, locked (generated; CI installs this)
+├── CHANGELOG.md
 ├── README.md
 └── run.py
 ```

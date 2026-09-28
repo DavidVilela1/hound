@@ -27,6 +27,7 @@ change their status or add a "Revisited" note.
 | 016 | Stdlib-only HTTP forwarding in the privileged daemon | Accepted |
 | 017 | CI on GitHub Actions; dev tools in `requirements-dev.txt`, config in `pyproject.toml` | Accepted |
 | 018 | Versioned SQLite schema: frozen baseline + ordered atomic migrations | Accepted |
+| 019 | Hash-checked, universal lock files generated with uv; CI installs the lock | Accepted |
 
 ---
 
@@ -193,6 +194,8 @@ change their status or add a "Revisited" note.
   observed when mypy 2.x flagged 5 issues that 1.x accepted. Mitigation: fix forward;
   the lock file (14.3) will make CI reproducible. Requires the project to be hosted on
   GitHub; until then the workflow is inert.
+* **Revisited (2026-09-28):** the lock file exists now (ADR-019); the test matrix installs
+  `requirements-dev.lock`, and the unpinned ranges run in a separate non-blocking job.
 
 ## ADR-018 — Versioned SQLite schema: frozen baseline + ordered atomic migrations
 * **Context:** ADR-015's trigger fired — schema changes are coming (device identity, alerts)
@@ -217,3 +220,28 @@ change their status or add a "Revisited" note.
   a table rebuild for most column changes). Non-SQLite URLs still use `create_all` without
   versioning (untested, ADR-003). On POSIX, the DB directory is created `0700` and the DB,
   `-wal` and `-shm` files are tightened to `0600` (roadmap S-8).
+
+## ADR-019 — Hash-checked universal lock files; CI installs the lock
+* **Context:** `requirements*.txt` hold version ranges, so every install (and CI) resolved
+  to whatever was newest that day. That already changed results once (mypy 2.x) and made
+  "CI passed" hard to reproduce. The owner installs on Windows; CI covers three OSes and
+  two Python versions.
+* **Options:** `pip freeze` from one machine (platform-specific, misses Windows-only
+  packages); `pip-compile` from pip-tools (one lock per OS/Python); `uv pip compile
+  --universal` (one lock for all platforms, environment markers where they differ); a
+  full project manager (Poetry/PDM/`uv.lock`), which would change how everyone installs.
+* **Chosen:** keep `requirements.txt` / `requirements-dev.txt` as the declared ranges and
+  generate `requirements.lock` / `requirements-dev.lock` with `uv pip compile --universal
+  --python-version 3.11 --generate-hashes` (the dev lock constrained by the runtime lock,
+  so shared pins are identical). Installing needs only plain pip; uv is a maintainer tool
+  for regenerating, not a dependency. CI's test matrix installs `requirements-dev.lock`
+  (hash-checked); the audit job audits both locks; a non-blocking job installs the newest
+  versions the ranges allow as an early warning. `tests/test_dependency_locks.py` fails if
+  a lock drifts from its ranges, loses hashes, or the two locks disagree.
+* **Reason:** one lock for every OS/Python keeps the repo simple; hashes turn "same
+  versions" into "same bytes" (supply-chain integrity, roadmap S-10); plain pip keeps the
+  owner's install instructions unchanged apart from the filename.
+* **Consequences:** security fixes arrive only when someone re-locks (the audit job and
+  the non-blocking newest-versions job signal when); regeneration needs network access and
+  uv; `--universal` relies on uv's marker resolution — verified on 2026-09-28 by resolving
+  the lock binary-only for Windows, macOS (x86-64/arm64) and Linux on Python 3.11–3.14.

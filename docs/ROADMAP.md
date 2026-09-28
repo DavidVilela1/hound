@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (14.4 done; next: 14.3a lock file + CHANGELOG).
+> Last reviewed: 2026-09-28 (14.3a done; next: 15a `hound doctor`).
 
 ---
 
@@ -141,7 +141,7 @@ Examples for upcoming work:
 | 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
 | 10 Dashboard | `app/frontend` | VERIFIED | `tests/test_dashboard.py` (NiceGUI user simulation vs. real API); visuals manual |
 | 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
-| 12 Testing & hardening | 245 tests, 92 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED (Linux) | Linux Py 3.11 + 3.13; Windows run by owner up to 14.4a; macOS via CI once on GitHub |
+| 12 Testing & hardening | 252 tests, 92 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED (Linux) | Linux Py 3.11 + 3.13; Windows run by owner up to 14.4a; macOS via CI once on GitHub |
 | 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | Windows statements corrected in 14.1; not yet confirmed on a Windows machine |
 
 ### Phase 14 — Release hardening → M6 *(current)*
@@ -204,8 +204,19 @@ and whose installs are reproducible.
 #### 14.3 Reproducible installs & release hygiene
 *Sequencing note (2026-09-28): moved after 14.4 because two of its items wait for owner
 decisions (license, version label); 14.4 is fully unblocked. Order within M6 is otherwise
-unaffected. Split after 14.4: **14.3a** lock file + CHANGELOG (unblocked, ← next task);
-**14.3b** LICENSE + version label (owner decisions).*
+unaffected. Split after 14.4: **14.3a** lock file + CHANGELOG (unblocked); **14.3b**
+LICENSE + version label (owner decisions).*
+
+**14.3a Lock files + CHANGELOG — DONE (2026-09-28)**
+* `requirements.lock` + `requirements-dev.lock` (universal, hash-checked, `uv pip compile`;
+  ADR-019); CI installs the dev lock, audits both locks, and runs the unpinned ranges in a
+  non-blocking job; `tests/test_dependency_locks.py` guards lock ↔ range consistency.
+* Verified: binary-only resolution for Windows/macOS/Linux × Py 3.11–3.14; fresh installs
+  with plain pip on 3.11 and 3.13 pass every check; pip-audit clean.
+* `CHANGELOG.md` created. `pytest` stays in `requirements.txt` for now (owner preference
+  not stated; moving it is a 14.3b question).
+
+**14.3b LICENSE + version label — blocked on owner decisions.**
 * **Tasks:** generated lock file (`requirements.lock` via `pip-compile` or `uv pip
   compile`, dev-only tool) used by CI; `CHANGELOG.md`; version policy (owner decision:
   keep 1.0.0 or re-label 0.9.0 until M6); **LICENSE** (owner decision); move `pytest` to
@@ -248,13 +259,20 @@ Split into two sessions (too large to verify properly in one):
   manual check.
 * **Definition of done (Phase 14):** all four items done + M6 exit criteria met.
 
+*Sequencing note (2026-09-28): every remaining Phase 14 item now waits on the owner
+(LICENSE/version, GitHub repo for CI/macOS, Windows live capture). Phase 15 starts
+meanwhile, with the diagnostic that helps the owner's Windows live-capture test first.
+M6 stays open until its exit criteria are met.*
+
 ### Phase 15 — Observability & diagnostics
 * **Goal:** know what the system is doing before tuning it.
 * **Tasks:** `/api/metrics` (JSON: queue high-water mark, batch latency p50/p95, drops per
   stage, WS drops, parser malformed rate, DB size); `hound doctor` (Python, Scapy,
   libpcap/Npcap, privileges, interface, port, DB writability); commit the benchmark script
   (`scripts/benchmark.py`) used for the baseline in §I.
-* **Acceptance:** a field trial can answer "did we lose anything?" from metrics alone.
+* **Slices:** **15a `hound doctor` ← next task** · 15b `/api/metrics` · 15c benchmark script.
+* **Acceptance:** a field trial can answer "did we lose anything?" from metrics alone;
+  `hound doctor` names the fix for each environment problem it finds.
 * **Risk:** metric creep — keep to counters that drive a decision.
 
 ### Phase 16 — Field trial & detection tuning → M7
@@ -337,7 +355,7 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28, after 14.4b): 245 tests, 92 % line coverage (`migrations.py` 100 %,
+Current numbers (2026-09-28, after 14.3a): 252 tests, 92 % line coverage (`migrations.py` 100 %,
 `daemon.py` 96 %, `dashboard.py` 96 %, `components.py` 91 %); gaps: `frontend/client.py` 68 %
 (WebSocket reconnect loop), `cli.py` 74 %, `core/logging_config.py` 40 %. The suite takes ~18 s
 (dashboard ~9.7 s, daemon ~4.5 s).
@@ -389,7 +407,7 @@ batch latency, WS per-client drops, `/api/stats` latency.
 | S-7 | API | Cap inbound WS frame size (clients never need to send) | Open (15) |
 | S-8 | Database | New `data/` dir `0700`; DB, `-wal`, `-shm` tightened to `0600` on POSIX (browsing metadata); pre-existing dirs untouched | Done (14.2) |
 | S-9 | Database | Bound parameters only; LIKE escaping; retention | Done |
-| S-10 | Dependencies | `pip-audit` job in CI (2026-09-28 local run: no known vulnerabilities); lock file still missing | Partly (lock file: 14.3) |
+| S-10 | Dependencies | Hash-checked lock files (ADR-019); CI audits the exact locked versions (2026-09-28 local run: no known vulnerabilities) | Done (14.3a); CI run pending a GitHub repo |
 | S-11 | Application | Domains logged only at DEBUG; review before adding new log lines | Done; keep |
 | S-12 | Application | Strict CSP for the dashboard | Blocked by NiceGUI inline scripts; revisit if remote access is ever added |
 | S-13 | Remote access | Auth (token/session) before any non-loopback deployment | Future (Phase 21+) |
@@ -415,7 +433,7 @@ batch latency, WS per-client drops, `/api/stats` latency.
 | Schema change breaks existing DBs | Unlikely since 14.2 | High | ordered atomic migrations; drift test vs ORM models | a model edit without a migration (test fails) | restore from backup (Phase 17) |
 | False positives erode trust | Likely | High | explainable reasons, Phase 16 tuning, allowlist | owner ignores dashboard | raise thresholds |
 | Encrypted DNS hides domains | Increasing | Medium | documented; SNI (Phase 20) | many `NO_PRIOR_DNS_LOOKUP` | accept limitation |
-| Dev-tool releases break CI (observed: mypy 2.x) | Likely over time | Low | ranges in `requirements-dev.txt`; fix forward | CI red with no code change | lock file (14.3) |
+| Dev-tool releases break CI (observed: mypy 2.x) | Likely over time | Low | CI installs the lock (14.3a); newest ranges in a non-blocking job | "newest allowed" job red | fix forward, then re-lock |
 | Project in a cloud-synced folder (owner's case: OneDrive) | Likely | Medium (privacy, SQLite locks) | README §16/§18 warnings | sync conflicts, "database is locked" | move project or set `HOUND_DATABASE_URL` |
 
 ---
