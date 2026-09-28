@@ -1,0 +1,31 @@
+# Hound sample geolocation table: cidr,country_code
+# ------------------------------------------------------------------
+# ILLUSTRATIVE, NON-AUTHORITATIVE DATA used by the default *simulated*
+# geolocator. Addresses not listed here are assigned a deterministic
+# pseudo-random country (HOUND_GEO_MODE=simulated) or "Unknown"
+# (HOUND_GEO_MODE=mapping_only). Do not use these results to draw real
+# conclusions; plug in a real GeoIP database for that (see README).
+# Most-specific prefix wins. Private/local addresses always map to LAN.
+8.8.8.0/24,US
+1.1.1.0/24,AU
+34.0.0.0/10,US
+52.0.0.0/11,US
+142.250.0.0/15,US
+151.101.0.0/16,US
+99.80.0.0/15,IE
+185.60.216.0/22,IE
+3.64.0.0/12,DE
+18.184.0.0/15,DE
+145.100.0.0/16,NL
+185.15.56.0/22,NL
+212.58.224.0/19,GB
+130.244.0.0/16,SE
+193.136.0.0/15,PT
+194.65.0.0/16,PT
+80.12.0.0/16,FR
+202.32.0.0/14,JP
+211.249.0.0/16,KR
+220.181.0.0/16,CN
+5.255.192.0/18,RU
+200.147.0.0/16,BR
+103.28.54.0/24,SG

@@ -1,0 +1,20 @@
+# Hound sample blocklist (SIMULATED DATA)
+# ---------------------------------------
+# One domain per line. Blank lines and text after '#' are ignored.
+# Also accepted: '*.domain' wildcards and hosts-file lines ("0.0.0.0 domain").
+#
+# Matching: an entry matches the domain itself and every subdomain of it,
+# on label boundaries. "example-bad.test" matches "cdn.example-bad.test"
+# but NOT "notexample-bad.test".
+#
+# The entries below use reserved TLDs (.example, .test, .invalid) so that the
+# sample list never flags a real website. Replace or extend it with a feed you
+# trust (e.g. a hosts-format list) for real use.
+
+malware-c2.example
+evil-botnet.test
+phishing-login.example
+cryptominer-pool.test
+tracker.badads.example
+*.ransom-payments.invalid
+0.0.0.0 exfil-dropbox.test

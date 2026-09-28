@@ -1,0 +1,24 @@
+# Hound runtime + test dependencies (Python 3.11+).
+# Versions validated together: fastapi 0.141, uvicorn 0.46, pydantic 2.13,
+# pydantic-settings 2.14, SQLAlchemy 2.1, nicegui 3.17, scapy 2.7,
+# httpx 0.28, websockets 17.1, pytest 9.1.
+
+# --- Backend / API -----------------------------------------------------------
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pydantic>=2.7,<3
+pydantic-settings>=2.3,<3
+SQLAlchemy>=2.0.30,<3
+
+# --- Ingestion (packet capture & parsing) --------------------------------------
+# Live capture additionally needs a platform capture library (not a pip package):
+#   Linux: libpcap (e.g. apt install libpcap0.8)  macOS: built in  Windows: Npcap
+scapy>=2.6,<3
+
+# --- Frontend (dashboard) ------------------------------------------------------
+nicegui>=3.0,<4
+httpx>=0.27,<1          # dashboard -> REST API client (also used by the tests)
+websockets>=15,<18      # dashboard -> live event stream; also uvicorn's WebSocket backend
+
+# --- Tests ------------------------------------------------------------------------
+pytest>=8,<10
