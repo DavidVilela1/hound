@@ -1,0 +1,392 @@
+# Hound — Roadmap
+
+> Living plan. The repository is the source of truth: if code and this file disagree,
+> fix this file. Current position and the next task are in
+> [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
+> [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
+>
+> Last reviewed: 2026-09-28 (baseline after the initial end-to-end build).
+
+---
+
+## A. Executive roadmap
+
+The initial build delivered a working vertical system (capture → pipeline → SQLite →
+API → WebSocket → dashboard, plus demo mode). Phases 0–13 of the original plan are done
+and verified **on Linux**. The work ahead is not new architecture; it is making that
+system trustworthy on the owner's real platform (Windows) and network, then extending it.
+
+| Stage | Phases | Milestone | State |
+|---|---|---|---|
+| Foundation → working system | 0–13 | M0–M5 | ✅ Done (Linux-verified) |
+| **Release hardening** | **14** | **M6 — Production-quality local build** | 🔶 **In progress** |
+| Observe & tune on a real network | 15–16 | M7 — Field-validated | Not started |
+| Data lifecycle & device identity | 17–18 | M8 — Durable & device-aware | Not started |
+| Alerting | 19 | M9 — Actionable | Not started |
+| Coverage & distribution | 20–21 | M10 — Distributable 1.0 | Not started |
+
+Principles: one vertical slice at a time; the app must start and all tests must pass after
+every task; no new frameworks without an ADR; measure before optimising.
+
+---
+
+## B. Milestones
+
+| ID | Milestone | Exit criteria | Status | Evidence |
+|---|---|---|---|---|
+| M0 | Architecture ready | layered packages, config, logging, models | VERIFIED | module-import check; `ARCHITECTURE.md` §4 |
+| M1 | First event | synthetic event → processing → SQLite → API | VERIFIED | `tests/test_processing.py`, `tests/test_api.py` |
+| M2 | Real packet | authorised packet captured & normalised | VERIFIED (Linux only) | manual run on `lo`, split mode (server as `nobody`, daemon as root) |
+| M3 | Security intelligence | enrichment + deterministic risk | VERIFIED | `tests/test_enrichment.py`, `tests/test_risk.py` |
+| M4 | Live dashboard | UI shows events live | VERIFIED (manual) | Playwright run: live rows update, dialogs, filters, dark/mobile |
+| M5 | Demo complete | full app without privileges | VERIFIED | `scripts/smoke_test.py` 12/12 |
+| **M6** | **Production-quality local build** | green on Windows/macOS/Linux CI; versioned schema; reproducible install; automated daemon/dashboard smoke; docs current | **IN_PROGRESS** | see Phase 14 |
+| M7 | Field-validated | ≥ 7 days on the owner's network; false-positive review done; metrics show no drops | NOT_STARTED | |
+| M8 | Durable & device-aware | backups/export; device identity beyond IP | NOT_STARTED | |
+| M9 | Actionable | opt-in alerts for dangerous events | NOT_STARTED | |
+| M10 | Distributable 1.0 | installable package, service mode, release notes | NOT_STARTED | |
+
+---
+
+## C. Architecture diagram
+
+```mermaid
+flowchart TD
+    subgraph PRIV[Capture daemon — privileged]
+        CAP[Scapy capture + BPF] --> PAR[PacketParser] --> LQ[Local queue] --> FWD[Forwarder]
+    end
+    subgraph SRV[Hound server — unprivileged]
+        ING[/POST /api/ingest/] --> Q[EventQueue]
+        DEMO[Demo generator] --> Q
+        Q --> W[ProcessingService]
+        W --> EN[Enrichment] --> RK[Risk engine] --> ST[(SQLite)]
+        ST --> API[REST API] --> UI[NiceGUI dashboard]
+        W --> BUS[Broadcaster] --> WS[/ws/events/] --> UI
+    end
+    FWD -- token --> ING
+```
+
+---
+
+## D. Dependency graph (implementation order)
+
+What must exist before what. ✅ = exists and verified.
+
+```mermaid
+flowchart TD
+    CFG[Configuration ✅] --> MOD[Domain models / NetworkEvent ✅]
+    MOD --> DB[Database ✅]
+    MOD --> PARSE[Parser ✅] --> CAPT[Capture ✅]
+    MOD --> ENR[Enrichment ✅]
+    MOD --> RISK[Risk engine ✅]
+    DB --> PROC[Processing pipeline ✅]
+    ENR --> PROC
+    RISK --> PROC
+    PROC --> API[API ✅] --> RT[Realtime transport ✅] --> UI[Dashboard ✅]
+    PARSE --> DEMO[Demo mode ✅]
+    CAPT --> DAEMON[Capture daemon ✅]
+    API --> DAEMON
+
+    CI[14.1 Cross-platform CI] --> REL[M6]
+    MIG[14.2 Schema versioning] --> REL
+    LOCK[14.3 Reproducible installs] --> REL
+    E2E[14.4 Automated daemon + UI smoke] --> REL
+    CI --> E2E
+    REL --> MET[15 Observability]
+    MET --> TUNE[16 Field trial & tuning]
+    MIG --> LIFE[17 Data lifecycle]
+    MIG --> DEV[18 Device identity]
+    TUNE --> ALERT[19 Alerting]
+    DEV --> ALERT
+    CI --> COV[20 Capture coverage]
+    REL --> DIST[21 Distribution]
+```
+
+Hard dependencies worth remembering:
+* **Any schema change** (device names, MAC, alert state) requires 14.2 first.
+* **Detection tuning** without metrics (15) is guesswork.
+* **Windows claims** in the README are unverified until 14.1.
+
+---
+
+## E. Vertical slices
+
+Every phase below is planned as thin end-to-end slices that keep the app runnable. The
+first slice (synthetic DNS event → normalised → risk → SQLite → API → dashboard) is done.
+Examples for upcoming work:
+
+* 14.2: add `user_version`, a no-op migration 1 → *app starts on old and new DBs* → first
+  real migration only when a feature needs it.
+* 18: capture source MAC on SYN/DNS → store on event → show in device dialog → *then*
+  friendly names and DHCP.
+* 19: one alert rule (blocklist hit) → one channel (desktop notification) → then more.
+
+---
+
+## F. Detailed roadmap
+
+### Phases 0–13 — completed (initial build)
+
+| Phase | Deliverable in repo | Status | Evidence / gap |
+|---|---|---|---|
+| 0 Discovery & architecture | layered packages, ADRs | VERIFIED | `ARCHITECTURE.md`, `DECISIONS.md` |
+| 1 Foundation | `app/core`, `run.py`, CLI, `.env.example` | VERIFIED | `tests/test_config.py`, `tests/test_cli_and_security.py` |
+| 2 Domain/event model | `app/models` | VERIFIED | `tests/test_models.py` |
+| 3 Database | `app/database` | VERIFIED | `tests/test_database.py` — gap: no migrations (14.2) |
+| 4 Packet ingestion | `app/ingestion/{capture,parser,daemon,forwarder}` | VERIFIED (Linux) | unit tests + manual live capture; daemon 0 % automated coverage (14.4) |
+| 5 Processing pipeline | `app/services/{processing,store,runtime}` | VERIFIED | `tests/test_processing.py` |
+| 6 Enrichment | `app/enrichment` | VERIFIED | `tests/test_enrichment.py` |
+| 7 Risk engine | `app/risk` | VERIFIED | `tests/test_risk.py` — real-traffic tuning pending (16) |
+| 8 FastAPI | `app/api` | VERIFIED | `tests/test_api.py`, `/docs`, `/redoc` |
+| 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
+| 10 Dashboard | `app/frontend` | FUNCTIONAL | manual Playwright only; 0 % automated (14.4) |
+| 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
+| 12 Testing & hardening | 207 tests, 79 % line coverage, ruff + mypy clean | FUNCTIONAL | Linux only (14.1) |
+| 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | two Windows statements unverified/incorrect (14.1) |
+
+### Phase 14 — Release hardening → M6 *(current)*
+
+**Goal:** a build the owner can trust on their own platform, whose data survives upgrades
+and whose installs are reproducible.
+**Prerequisites:** phases 0–13 (done).
+
+#### 14.1 Cross-platform verification & CI ← **next task**
+* **Tasks**
+  1. Add `.github/workflows/ci.yml`: matrix `ubuntu-latest`, `windows-latest`,
+     `macos-latest` × Python 3.11, 3.13; steps: install, `ruff check`, `mypy app`,
+     `pytest`, `python scripts/smoke_test.py`; plus a `pip-audit -r requirements.txt` job.
+  2. Fix known Windows test failures (by inspection): `tests/test_config.py`
+     lines 70 and 73 compare against back-slashed paths while the code emits POSIX paths.
+  3. `resolve_interface()` also accepts Scapy's Windows `network_name`
+     (`\Device\NPF_{…}`); correct README §9, which wrongly says the friendly name is in the
+     DESCRIPTION column (Scapy's `name` *is* the friendly name).
+  4. Add a Windows note for the ingest-token file (POSIX `0600` is ignored).
+* **Deliverables:** CI workflow; fixes; README corrections; `PROJECT_STATUS.md` updated.
+* **Tests:** whole suite on 3 OS; new unit test for NPF-name resolution.
+* **Acceptance:** CI green on all 6 matrix cells; owner runs `pytest` and
+  `python run.py --demo` successfully on their Windows laptop.
+* **Risks:** hidden Windows-only issues (signals, file locking of SQLite during test
+  teardown, NiceGUI/uvicorn on Proactor loop). Mitigation: fix forward inside this task;
+  anything larger becomes its own item.
+* **Needs from owner:** a GitHub repository (or run `pytest` locally and share output).
+
+#### 14.2 Schema versioning & migrations
+* **Tasks:** store schema version in `PRAGMA user_version`; `app/database/migrations.py`
+  with ordered `(version, fn)` steps executed in a transaction at start-up; refuse to start
+  (clear message) on a DB newer than the code; mark current schema as version 1.
+* **Tests:** fresh DB → v1; pre-versioning DB (user_version 0 with tables) → adopted as v1;
+  simulated v2 migration on a copy; "newer DB" refusal.
+* **Acceptance:** existing `data/hound.db` files keep working; ADR-015 superseded.
+* **Risk:** SQLite `ALTER TABLE` limits → use table-rebuild pattern inside a transaction.
+
+#### 14.3 Reproducible installs & release hygiene
+* **Tasks:** generated lock file (`requirements.lock` via `pip-compile` or `uv pip
+  compile`, dev-only tool) used by CI; `CHANGELOG.md`; version policy (owner decision:
+  keep 1.0.0 or re-label 0.9.0 until M6); **LICENSE** (owner decision); move `pytest` to
+  an optional `[dev]` extra if the owner prefers a lean runtime install.
+* **Acceptance:** `pip install -r requirements.lock` reproduces CI's environment.
+
+#### 14.4 Automated coverage for the daemon and dashboard
+* **Tasks:** move the smoke test into pytest (`-m e2e`, skipped by default or run in CI);
+  test `CaptureDaemon` with a fake capture and a live test server (split mode without
+  privileges); NiceGUI page test using NiceGUI's `User` testing fixture if compatible,
+  otherwise an optional Playwright job in CI.
+* **Acceptance:** `daemon.py` and `dashboard.py` no longer at 0 % coverage.
+* **Definition of done (Phase 14):** all four items done + M6 exit criteria met.
+
+### Phase 15 — Observability & diagnostics
+* **Goal:** know what the system is doing before tuning it.
+* **Tasks:** `/api/metrics` (JSON: queue high-water mark, batch latency p50/p95, drops per
+  stage, WS drops, parser malformed rate, DB size); `hound doctor` (Python, Scapy,
+  libpcap/Npcap, privileges, interface, port, DB writability); commit the benchmark script
+  (`scripts/benchmark.py`) used for the baseline in §I.
+* **Acceptance:** a field trial can answer "did we lose anything?" from metrics alone.
+* **Risk:** metric creep — keep to counters that drive a decision.
+
+### Phase 16 — Field trial & detection tuning → M7
+* **Tasks:** run on the owner's network ≥ 7 days (split mode); review every
+  suspicious/dangerous event; add an **allowlist** (domains/devices never flagged);
+  load signal weights/thresholds from an optional TOML file (stdlib `tomllib`, no new
+  dependency); blocklist reload without restart; document tuning results.
+* **Acceptance:** false-positive rate documented and accepted by owner; no drops in metrics.
+* **Known candidates:** NXDOMAIN burst flags a device's *next* normal queries; CDN
+  hostnames trip the entropy signal; `NO_PRIOR_DNS_LOOKUP` fires for capture started
+  mid-session.
+
+### Phase 17 — Data lifecycle
+* **Tasks:** `hound db backup` (SQLite online backup API), CSV/JSON export endpoint,
+  device-row expiry, optional time-based retention, periodic `PRAGMA optimize`.
+* **Prereq:** 14.2. **Acceptance:** restore from backup verified by test.
+
+### Phase 18 — Device identity → M8 (with 17)
+* **Tasks:** record source MAC (from Ethernet header) → device table; ARP/DHCP observations
+  as new `PacketType`s; user-assigned device names; IP changes do not split history.
+* **Prereq:** 14.2. **Risk:** MAC randomisation on phones → names attach to MAC *and* show
+  "possibly the same device" hints rather than silent merges.
+
+### Phase 19 — Alerting → M9
+* **Tasks:** alert rules (start: blocklist hit, dangerous device), de-duplication/cool-down,
+  channels (desktop notification first, then webhook/e-mail), alert history in UI.
+* **Prereq:** 16 (tuned signals, otherwise alert fatigue), 17/18 for context.
+
+### Phase 20 — Capture coverage
+* **Tasks:** IPv6 SYN clause in default BPF after testing; multiple interfaces; optional
+  TLS SNI extraction; pcap-replay source for regression tests; macOS live verification.
+
+### Phase 21 — Distribution → M10
+* **Tasks:** rename package `app` → `hound` (ADR-011 revisit); wheel/pipx install; service
+  units (systemd/launchd/Windows service for the daemon); optional Docker image (Linux,
+  `--net=host`, `NET_RAW`); release notes; tag 1.0.
+
+---
+
+## G. Definition of Done (project-wide)
+
+A task is **done** only when all apply:
+1. Implementation exists and is wired in (no dead code, no placeholders).
+2. `python -m compileall`, `ruff check`, `mypy app` pass.
+3. Tests cover the new behaviour; the **whole** suite passes (never delete or skip tests to
+   get green).
+4. `python run.py --demo` starts and `scripts/smoke_test.py` passes.
+5. README / `.env.example` / docs updated if behaviour, config or API changed.
+6. No security regression (checked against §J); no new dependency without an ADR.
+7. `PROJECT_STATUS.md` updated; ADR added for significant decisions.
+
+"Code written" ≠ done. Unverifiable items are reported as such, not marked done.
+
+---
+
+## H. Testing strategy
+
+```text
+                 E2E  (smoke test 12 checks; manual live capture; manual Playwright)
+               /      \
+        API tests        Integration
+     (26: test_api,     (20: database, processing, demo)
+      test_frontend)
+          /                      \
+   Unit (161: config, netutils, models, parser, capture*, enrichment, risk, forwarder, cli)
+```
+\* capture tests use a fake sniffer — no root, no traffic.
+
+| Level | Belongs here | Rules |
+|---|---|---|
+| Unit | parsing, normalisation, validation, each risk signal, blocklist, geo, config | pure, deterministic, event-time based |
+| Integration | repositories on a temp SQLite file, processing worker, demo pipeline | temp dirs only; no network |
+| API | HTTP status codes, schemas, auth, WS, Host/Origin checks | FastAPI `TestClient` / `httpx.ASGITransport` |
+| E2E | server + demo + WS; (14.4) daemon split mode; dashboard render | free port, temp DB; opt-in marker |
+| Manual | live capture per OS | recorded in `PROJECT_STATUS.md` with date/platform |
+
+**Fixtures to consolidate (14.4):** move inline packet builders into
+`tests/fixtures/packets.py` (DNS query/response/NXDOMAIN, SYN, SYN-ACK, IPv6, truncated,
+non-DNS on port 53); scenario builders for multiple devices, repeated connections, port
+scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
+synthetic packets for replay tests (Phase 20).
+
+Current numbers (2026-09-28): 207 tests, 79 % line coverage; gaps: `frontend/dashboard.py`
+& `components.py` 0 %, `ingestion/daemon.py` 0 %, `cli.py` 52 %, `core/logging_config.py` 40 %.
+
+---
+
+## I. Performance plan
+
+**Measured baseline** (dev sandbox, 1 vCPU class, Python 3.11, demo traffic mix):
+
+| Path | Result |
+|---|---|
+| Scapy dissection of raw frames | ≈ 4 700 pkt/s — **the bottleneck** |
+| Parser (dissected packet → `NetworkEvent`) | ≈ 14 500 pkt/s |
+| Processing, batch = 1 | ≈ 800 events/s |
+| Processing, batch = 50–200 (enrich + risk + commit) | ≈ 5 400 events/s |
+| `/api/stats` at 13 k / 250 k rows | 7 ms / 71 ms |
+| `/api/stats/countries` at 250 k rows | 41 ms |
+| `/api/events` (50 rows, incl. total count) at 250 k rows | 5 ms (16 ms with domain substring) |
+| DB size | ≈ 390 B/event → ≈ 93 MiB at the 250 000-event cap |
+| Process RSS during benchmark | ≈ 185 MiB |
+
+A busy home network produces tens of DNS queries and SYNs per second — two orders of
+magnitude below these limits. **No optimisation is planned now.**
+
+**Measure before changing** (Phase 15 metrics): queue high-water mark, drops per stage,
+batch latency, WS per-client drops, `/api/stats` latency.
+
+**Triggers → options**
+* `/api/stats` > 200 ms or multiple dashboards open → maintain counters incrementally in
+  the worker instead of `COUNT(*)` scans.
+* Queue drops > 0 in real use → profile Scapy dissection; consider `conf.layers.filter`
+  to dissect only needed layers; priority lane for blocklist hits.
+* DB > 500 MiB → lower retention or time-based retention; `VACUUM` after prune.
+* UI sluggish → lower feed cap, increase flush interval; never one update per packet.
+
+---
+
+## J. Security roadmap
+
+| ID | Area | Item | Status |
+|---|---|---|---|
+| S-1 | Capture | Only the daemon is privileged; no DB/API/UI code in it | Done (ADR-002) |
+| S-2 | Capture | Interface validated against Scapy's list; add NPF names | Partly (14.1) |
+| S-3 | Capture | Parser never raises; truncation sweep test | Done; add random-bytes fuzz test (14.4) |
+| S-4 | API | Loopback bind, Host allow-list, WS Origin check, warning on non-loopback bind | Done |
+| S-5 | API | Rate limiting | Not needed on localhost; revisit with remote dashboard |
+| S-6 | Config | Ingest token file: `0600` on POSIX; **Windows relies on profile ACLs** — document or store under `%LOCALAPPDATA%` | Open (14.1) |
+| S-7 | API | Cap inbound WS frame size (clients never need to send) | Open (15) |
+| S-8 | Database | Create `data/` as `0700` and DB `0600` on POSIX (contains browsing metadata) | Open (14.2) |
+| S-9 | Database | Bound parameters only; LIKE escaping; retention | Done |
+| S-10 | Dependencies | Lock file + `pip-audit` in CI (2026-09-28: no known vulnerabilities) | Open (14.1/14.3) |
+| S-11 | Application | Domains logged only at DEBUG; review before adding new log lines | Done; keep |
+| S-12 | Application | Strict CSP for the dashboard | Blocked by NiceGUI inline scripts; revisit if remote access is ever added |
+| S-13 | Remote access | Auth (token/session) before any non-loopback deployment | Future (Phase 21+) |
+
+---
+
+## K. Risk register
+
+| Risk | Probability | Impact | Mitigation | Trigger | Fallback |
+|---|---|---|---|---|---|
+| Hound misbehaves on Windows (owner's platform) | **Likely** (known test failures, unverified capture) | High | 14.1 CI matrix; owner run | CI red / owner report | Run in WSL2 or a Linux VM with bridged networking |
+| Capture permissions confuse users | Likely | Medium | split mode, clear errors (verified), README per OS | support questions | all-in-one mode with sudo/admin |
+| Scapy behaviour/API changes | Possible | Medium | version range `<3`, defensive DNS section handling, CI | CI failure on upgrade | pin in lock file |
+| Npcap/libpcap missing | Likely on fresh machines | Medium | actionable error; user-space fallback for default filter | "driver unavailable" log | install instructions |
+| Only own traffic visible (switched/Wi-Fi) | Very likely | High for value | README §9 explains mirror port / router / DNS host | empty device list | run on Pi-hole/router host |
+| SQLite write contention | Unlikely (single writer, WAL) | Medium | `busy_timeout`, short read sessions | "database is locked" in logs | increase timeout; batch size |
+| High event volume | Unlikely at home | Medium | bounded queue, batching, metrics | `events_dropped` > 0 | narrower BPF; retention |
+| Memory growth | Unlikely | High | every buffer bounded (queue, WS, caches, tracker, feed) | RSS climbs over days | restart; profile |
+| WebSocket reliability | Possible | Low | heartbeats, reconnect with back-off, polling fallback | "reconnecting" badge persists | REST polling |
+| Malformed packets | Certain | Low | parser never raises; counters | malformed rate spikes | inspect with DEBUG |
+| IPv6 SYNs missed | Certain with default filter | Medium | documented clause | IPv6-heavy network | Phase 20 |
+| Database growth | Certain over time | Medium | 250 k cap ≈ 93 MiB | disk warnings | lower cap |
+| Schema change breaks existing DBs | Certain without 14.2 | High | 14.2 before any schema change | any model/table edit | delete DB (data loss) |
+| False positives erode trust | Likely | High | explainable reasons, Phase 16 tuning, allowlist | owner ignores dashboard | raise thresholds |
+| Encrypted DNS hides domains | Increasing | Medium | documented; SNI (Phase 20) | many `NO_PRIOR_DNS_LOOKUP` | accept limitation |
+
+---
+
+## L. Future architecture (not scheduled for implementation now)
+
+| Capability | Today's constraint that keeps it cheap |
+|---|---|
+| Real GeoIP | `GeoLocator` protocol; single factory |
+| DoH/DoT visibility | treat as a limitation; SNI later as a new `PacketType` |
+| Full IPv6 | parser already IPv6-aware; only BPF and tests missing |
+| Device fingerprinting, DHCP, ARP | new `PacketType`s through the same queue; schema versioning first |
+| Historical analytics | keep timestamps UTC and indexed; add aggregate tables via migrations, not ad-hoc |
+| Configurable detection rules | all thresholds already in `RiskConfig`/`RiskWeights` |
+| Alerting | post-persist hook beside the publisher |
+| Export | repositories already filter/paginate; add streaming CSV |
+| Docker / system service | settings-based paths; capture is a separate process |
+| Remote dashboard | dashboard is an API client; add auth at the API edge |
+| Multiple interfaces | `EventSource` per interface into one queue |
+
+---
+
+## M. Ongoing planning rules
+
+When asked to continue development: inspect the repo → read `PROJECT_STATUS.md`, this
+file and relevant ADRs → confirm what is actually complete (run the checks) → pick the
+next task by dependencies → implement → test → update status/roadmap/ADRs → report.
+
+**Anti-drift:** no rewrites of working components without a reason; no new frameworks
+casually; no parallel implementations; no silent API or schema changes (API changes are
+reflected in README §13; schema changes go through migrations); never remove tests to
+pass; never mark unverified work complete.

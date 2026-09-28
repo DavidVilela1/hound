@@ -1,0 +1,263 @@
+# Hound — Architecture & Infrastructure
+
+> Status of this document: describes the **current** architecture (verified against the
+> code on 2026-09-28) and the **target** architecture it should grow into. Where the two
+> differ, the gap is called out and tracked in [`ROADMAP.md`](ROADMAP.md).
+> Decisions referenced as `ADR-NNN` live in [`DECISIONS.md`](DECISIONS.md).
+
+---
+
+## 1. System context
+
+Hound is a **single-user, local-first** application. One machine captures (or simulates)
+network traffic, analyses it and serves a dashboard to a browser on the same machine.
+There is no cloud component and no multi-tenant concern.
+
+```mermaid
+flowchart LR
+    subgraph NET[Home network]
+        D1[Devices] --- R[Router / switch]
+    end
+    R -- packets seen by the capture interface --> CAP
+    subgraph HOST[Monitoring host]
+        CAP[Capture daemon<br/>privileged] -- localhost HTTP POST<br/>token-authenticated --> SRV
+        SRV[Hound server<br/>unprivileged:<br/>pipeline + API + dashboard] --- DB[(SQLite)]
+    end
+    U[Browser on the same host] -- http://127.0.0.1:8000 --> SRV
+```
+
+## 2. Target pipeline
+
+The target shape equals the current shape; the long-term work is hardening and
+extension, not re-architecture.
+
+```mermaid
+flowchart TD
+    A[Packet capture<br/>Scapy AsyncSniffer + BPF] --> B[Event normalisation<br/>PacketParser → NetworkEvent]
+    S[Demo generator<br/>real Scapy packets] --> B
+    B --> Q[Bounded EventQueue<br/>drop-on-full]
+    F[Capture daemon forwarder] -- POST /api/ingest --> Q
+    Q --> P[ProcessingService<br/>single worker thread]
+    P --> E[EnrichmentService<br/>blocklist · geo · DNS correlation]
+    E --> K[RiskEngine<br/>signals → score → level]
+    K --> DB[(SqlEventStore<br/>SQLite WAL)]
+    DB --> BUS[EventBroadcaster<br/>per-client bounded queues]
+    DB --> API[FastAPI REST]
+    BUS --> WS[/ws/events WebSocket/]
+    API --> UI[NiceGUI dashboard]
+    WS --> UI
+```
+
+In split mode (recommended for live capture) boxes A, B and a local queue run in the
+**capture daemon** process, which forwards to `/api/ingest`; everything from the server's
+queue onwards runs in the **unprivileged server** (ADR-002).
+
+## 3. Component contracts
+
+Each component: responsibility · inputs → outputs · depends on · failure modes · how it is
+tested · extension points. File references are to the current code.
+
+### 3.1 Packet capture — `app/ingestion/capture.py`
+* **Responsibility:** open a capture on one interface with a BPF filter and hand every
+  packet to the parser without blocking.
+* **In → out:** raw frames → `NetworkEvent` via an `EventSink` callable (non-blocking `offer`).
+* **Depends on:** Scapy, OS capture layer (libpcap / Npcap / BPF), `PacketParser`.
+* **Failure modes:** permission denied; interface missing or disappears; libpcap missing
+  (falls back to user-space filtering for the default filter); invalid BPF; sniffer thread
+  dies (supervisor marks state `error`, surfaced in `/health`); loopback duplicates
+  (de-duplicated, ADR-014).
+* **Tests:** `tests/test_capture.py` with a fake `AsyncSniffer` (no root). Real capture
+  verified manually on Linux loopback only.
+* **Extension points:** multiple interfaces (one service per interface feeding the same
+  queue); pcap-file replay source (Scapy `offline=`) for regression tests.
+
+### 3.2 Event normalisation — `app/ingestion/parser.py`, `app/models/events.py`
+* **Responsibility:** classify packets (DNS query / DNS response / TCP SYN; ignore
+  SYN-ACK and everything else) and build the single event contract `NetworkEvent`.
+* **In → out:** Scapy `Packet` → `NetworkEvent | None` (never raises; counts
+  parsed/ignored/malformed).
+* **Depends on:** Scapy layers, Pydantic, `app.core.netutils`.
+* **Failure modes:** malformed/truncated payloads, non-ASCII names, old Scapy DNS section
+  layout — all handled and counted.
+* **Tests:** `tests/test_parser.py` (synthetic packets incl. truncation sweep),
+  `tests/test_models.py`.
+* **Extension points:** new `PacketType` values (e.g. TLS ClientHello SNI, DHCP, ARP) —
+  add a parser branch and an enum value; downstream code dispatches on `packet_type`.
+
+### 3.3 Event queue — `app/ingestion/queue.py`
+* **Responsibility:** decouple producers from the consumer; bound memory.
+* **In → out:** `offer(event) -> bool` (never blocks) → `get_batch(max, timeout)`.
+* **Failure modes:** full queue → newest event dropped and counted (`events_dropped`).
+* **Tests:** `tests/test_processing.py::test_event_queue_is_bounded`.
+* **Extension points:** priority lanes (e.g. never drop blocklist hits) if drops are ever
+  observed in practice.
+
+### 3.4 Processing pipeline — `app/services/processing.py`
+* **Responsibility:** the only writer: responses → state updates; queries/SYNs →
+  enrich → score → persist → publish.
+* **In → out:** batches of `NetworkEvent` → persisted `EventOut` + broadcast messages.
+* **Depends on:** `EnrichmentService`, `RiskEngine`, `EventStore`, publisher callable.
+* **Failure modes:** per-event exceptions counted and skipped; DB errors drop the batch,
+  count it and surface `last_error` in `/health` (pipeline keeps running).
+* **Tests:** `tests/test_processing.py`, `tests/test_demo.py` (full pipeline).
+* **Extension points:** an alerting hook after persistence (publisher is already a
+  pluggable callable).
+
+### 3.5 Enrichment — `app/enrichment/`
+* **Responsibility:** add blocklist match, destination country, domain inferred from
+  earlier DNS answers, public/local destination flag.
+* **In → out:** `NetworkEvent` → `Enrichment` (pure, no network I/O).
+* **Depends on:** `Blocklist` (`DomainReputation` protocol), `GeoLocator` protocol,
+  `ResolutionCache` (bounded LRU + TTL).
+* **Failure modes:** missing/empty blocklist (warning, reputation disabled); broken
+  geolocator (caught, country `None`).
+* **Tests:** `tests/test_enrichment.py`.
+* **Extension points:** real GeoIP (`GeoLocator`), multiple reputation feeds (compose
+  `DomainReputation`s), allowlist.
+
+### 3.6 Risk engine — `app/risk/`
+* **Responsibility:** deterministic, explainable scoring (ADR-009).
+* **In → out:** `(NetworkEvent, Enrichment)` → `RiskAssessment(score, level, reasons)`.
+* **Depends on:** `RiskConfig` (from settings), `DeviceBehaviorTracker` (bounded,
+  event-time sliding windows).
+* **Failure modes:** state lost on restart (by design, windows are ≤ minutes); memory
+  bounded by device/entry caps.
+* **Tests:** `tests/test_risk.py` (every signal, thresholds, cap, determinism, bounds).
+* **Extension points:** add a class implementing `RiskSignal`; weights/thresholds are
+  data (`RiskWeights`, `RiskConfig`). Target: rules loaded from a TOML file (Phase 16).
+
+### 3.7 Persistence — `app/database/`, `app/services/store.py`
+* **Responsibility:** atomically store events and update device aggregates; retention.
+* **In → out:** `ProcessedEvent`s → rows; repositories → ORM records for queries.
+* **Depends on:** SQLAlchemy 2, SQLite (WAL, `busy_timeout`).
+* **Failure modes:** locked/unwritable DB (e.g. created by root), disk full, corrupted
+  JSON columns (re-validated on read).
+* **Tests:** `tests/test_database.py`.
+* **Gap vs target:** schema created with `create_all` only — **no schema versioning or
+  migrations** (ADR-015, tracked as critical debt before any schema change).
+
+### 3.8 API — `app/api/`
+* **Responsibility:** thin HTTP layer: validation, auth for ingest, JSON contracts.
+* **In → out:** HTTP requests → Pydantic schemas (`app/models/schemas.py`).
+* **Depends on:** `HoundRuntime` services via `request.app.state` (no globals).
+* **Failure modes:** DB errors → 503; bad input → 422; bad token → 401; big body → 413;
+  foreign Host → 400.
+* **Tests:** `tests/test_api.py`, `tests/test_frontend.py` (client contract).
+* **Extension points:** versioned prefix (`/api/v2`) if a breaking change is ever needed;
+  export endpoints.
+
+### 3.9 Realtime event bus — `app/services/broadcaster.py`, `app/api/routes/ws.py`
+* **Responsibility:** push new events to subscribers without polling the DB.
+* **In → out:** list of messages from the worker thread → per-subscriber bounded
+  `asyncio.Queue` → WebSocket JSON frames (plus `hello` / `heartbeat`).
+* **Failure modes:** slow client (oldest messages dropped for that client only); client
+  disconnect (detected by a concurrent receive task); foreign Origin (closed with 1008).
+* **Tests:** `tests/test_api.py::test_websocket_*`, `tests/test_processing.py::test_broadcaster_*`.
+* **Extension points:** server-side filtering per subscription (e.g. only dangerous).
+
+### 3.10 Dashboard — `app/frontend/`
+* **Responsibility:** present state; never touches SQLite (ADR-007).
+* **In → out:** REST snapshots + WebSocket events → NiceGUI components.
+* **Failure modes:** API unreachable (error banner, retries); WebSocket down (polling
+  fallback every 5 s); bursts (buffered, flushed every 0.5 s, feed capped at 200 rows).
+* **Tests:** pure helpers and API client in `tests/test_frontend.py`; page behaviour only
+  verified manually with Playwright — **0 % automated coverage of `dashboard.py`**.
+* **Extension points:** new tabs are self-contained panels on `DashboardPage`.
+
+### 3.11 Composition & lifecycle — `app/services/runtime.py`, `app/api/app.py`, `app/cli.py`
+* **Responsibility:** build and wire all components; start/stop order; run modes
+  (`idle`, `demo`, `capture`); CLI commands (`serve`, `capture`, `interfaces`).
+* **Failure modes:** DB init failure aborts start-up with a clear log line; source
+  failures are non-fatal (API/dashboard keep running).
+* **Shutdown order:** source stop → worker drains queue → broadcaster unbind → engine
+  dispose (FastAPI lifespan). Capture daemon: SIGINT/SIGTERM → capture stop → forwarder
+  final flush.
+
+### 3.12 Capture daemon & forwarder — `app/ingestion/daemon.py`, `forwarder.py`
+* **Responsibility:** privileged process: capture → local queue → batched POSTs.
+* **Failure modes:** API down (exponential back-off 1→16 s, 5 attempts, then the batch is
+  dropped and counted); bad token (logged, not retried); own traffic captured (filtered by
+  `SelfTrafficFilter`, ADR-014).
+* **Tests:** `tests/test_forwarder.py` (injected transport). `daemon.py` itself has
+  **0 % automated coverage** — verified manually (split mode, server as `nobody`).
+
+## 4. Dependency rules (enforced by convention, checked in review)
+
+```text
+core                    ← imported by everyone; imports nothing outside app.core
+models                  → core.netutils only
+ingestion               → models, core            (never database/api/frontend)
+enrichment, risk        → models, core
+database                → models, core
+services                → ingestion.queue/sources, enrichment, risk, database, models, core
+api                     → services, models, core
+frontend                → core.config + its own HTTP/WS client only (no backend packages)
+cli                     → api, services, ingestion, core
+```
+
+Verified on 2026-09-28: every module imports standalone (no circular imports), and
+`app.frontend` imports no backend package.
+
+## 5. Infrastructure plan
+
+### 5.1 Runtime
+| Topic | Current | Target |
+|---|---|---|
+| Python | 3.11+ (developed/tested on 3.11.15) | CI on 3.11 and 3.13 |
+| Environment | `venv` + `requirements.txt` (ranges) | plus a **lock file** (`requirements.lock`, generated) for reproducible installs |
+| Entry points | `python run.py`, `python -m app`, `hound` (editable install) | unchanged |
+| Process model | 1 server process; optional 1 capture daemon | unchanged; optional OS service units (Phase 21) |
+| Configuration | `HOUND_*` env / `.env` / CLI, validated by Pydantic (ADR-010) | unchanged; add `hound config check` diagnostic |
+
+### 5.2 Data
+| Topic | Current | Target |
+|---|---|---|
+| Engine | SQLite, WAL, `synchronous=NORMAL`, `busy_timeout=5000` | unchanged |
+| Schema | `events`, `devices`; 7 + 2 indexes; `create_all` | **versioned schema** (`PRAGMA user_version` + ordered migration steps, ADR-015 follow-up) |
+| Retention | newest 250 000 events kept (checked every 50 batches) | plus device-row expiry and optional time-based retention |
+| Size | measured ≈ 390 B/event → ≈ 93 MiB at the default cap | documented sizing guidance |
+| Backup | none | `hound db backup` using SQLite online backup API; export CSV/JSON |
+
+### 5.3 Networking & capture
+| Topic | Current | Target |
+|---|---|---|
+| Interface discovery | `python run.py interfaces`; name or description accepted | also accept Windows `\Device\NPF_{…}` network names |
+| BPF | default: DNS (UDP/TCP 53) + IPv4 SYN | optional IPv6 SYN clause documented; consider making it default after testing |
+| Permissions | split mode; setcap/ChmodBPF/Npcap documented | unchanged |
+| Platforms | live capture verified on **Linux only** | verified on Windows (primary user platform) and macOS |
+| IPv6 | parsed everywhere; SYN filter IPv4-only | full IPv6 SYN coverage |
+
+### 5.4 Application
+* FastAPI + Uvicorn (single worker — required: runtime state is in-process).
+* NiceGUI mounted on the same app; talks to the API over loopback HTTP/WS.
+* Background workers: capture thread (+ supervisor), processing thread, demo thread,
+  forwarder thread. All daemon threads with explicit stop events and joins.
+* Graceful shutdown: see §3.11. Target: shutdown timeout guarantees and a test for it.
+
+### 5.5 Observability
+| Topic | Current | Target |
+|---|---|---|
+| Logs | text or JSON, `extra` fields, per-event data only at DEBUG | unchanged |
+| Health | `/health` (DB ping, source state, worker alive, counters) | unchanged |
+| Metrics | counters inside `/health` and `/api/stats` | `/api/metrics` JSON: queue depth high-water mark, batch latency, drops, WS drops, parser malformed rate |
+| Diagnostics | log messages with actionable text | `hound doctor`: Python/Scapy/libpcap/Npcap, permissions, interface, DB writability, port |
+
+### 5.6 Security
+Least privilege (ADR-002), loopback bind, Host allow-list, WebSocket Origin check, token
+ingest with pre-body auth and size caps, SQLAlchemy bound parameters, JSON-only
+deserialisation with re-validation, bounded buffers everywhere, no secrets in the repo.
+Detailed hardening plan: [`ROADMAP.md` §J](ROADMAP.md#j-security-roadmap).
+
+## 6. Designing for the future (constraints on today's code)
+
+| Future capability | Keep true today |
+|---|---|
+| Real GeoIP | Only `build_geolocator()` knows implementations; everything else uses `GeoLocator`. |
+| TLS SNI / DHCP / ARP observations | New observation kinds are new `PacketType`s on `NetworkEvent`; do not add side channels around the queue. |
+| Device fingerprinting / MAC identity | Device key is `source_ip` today; do not spread that assumption beyond `DeviceRepository` and `DeviceOut`. Needs schema versioning first. |
+| Configurable rules | Signals read thresholds/weights only from `RiskConfig`; no literals in signal code. |
+| Alerting | Hook after `SqlEventStore.save()` (same place as the publisher); never inside the capture callback. |
+| Multiple interfaces | Sources are independent `EventSource`s sharing one queue; the parser takes the interface name per packet. |
+| Remote dashboard | Keep the dashboard an API client (ADR-007); add auth at the API edge, not inside the UI. |
+| Docker / service | All paths resolve from settings; no reliance on CWD; capture stays a separate process. |
+| Other databases | SQL only in `app/database/repositories.py`; SQLite pragmas isolated in `engine.py`. |

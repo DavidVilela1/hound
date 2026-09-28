@@ -34,6 +34,11 @@ dashboard — entirely on your own machine, with no cloud service.
 19. [Limitations](#19-limitations)
 20. [Future improvements](#20-future-improvements)
 
+**Project planning docs:** current state and next task in
+[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md); plan in [`docs/ROADMAP.md`](docs/ROADMAP.md);
+design in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); decisions in
+[`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ---
 
 ## 1. Overview
@@ -524,6 +529,7 @@ hound/
 │   ├── blocklist.txt          # sample blocklist (reserved TLDs only)
 │   └── geo_ranges.csv         # illustrative CIDR → country table
 ├── data/                      # SQLite DB and ingest token (created at runtime)
+├── docs/                      # status, roadmap, architecture, decision records
 ├── scripts/
 │   ├── smoke_test.py          # end-to-end check of demo mode
 │   ├── generate_test_traffic.py
