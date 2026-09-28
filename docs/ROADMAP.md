@@ -36,7 +36,7 @@ every task; no new frameworks without an ADR; measure before optimising.
 |---|---|---|---|---|
 | M0 | Architecture ready | layered packages, config, logging, models | VERIFIED | module-import check; `ARCHITECTURE.md` §4 |
 | M1 | First event | synthetic event → processing → SQLite → API | VERIFIED | `tests/test_processing.py`, `tests/test_api.py` |
-| M2 | Real packet | authorised packet captured & normalised | VERIFIED (Linux only) | manual run on `lo`, split mode (server as `nobody`, daemon as root) |
+| M2 | Real packet | authorised packet captured & normalised | VERIFIED (Linux + Windows) | Linux: `lo`, split mode (server as `nobody`, daemon as root). Windows: owner's laptop, Npcap, "Wi-Fi", split mode (2026-09-28) |
 | M3 | Security intelligence | enrichment + deterministic risk | VERIFIED | `tests/test_enrichment.py`, `tests/test_risk.py` |
 | M4 | Live dashboard | UI shows events live | VERIFIED (manual) | Playwright run: live rows update, dialogs, filters, dark/mobile |
 | M5 | Demo complete | full app without privileges | VERIFIED | `scripts/smoke_test.py` 12/12 |
@@ -141,7 +141,7 @@ Examples for upcoming work:
 | 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
 | 10 Dashboard | `app/frontend` | VERIFIED | `tests/test_dashboard.py` (NiceGUI user simulation vs. real API); visuals manual |
 | 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
-| 12 Testing & hardening | 299 tests, 93 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED (Linux) | Linux Py 3.11 + 3.13; Windows run by owner up to 14.4a; macOS via CI once on GitHub |
+| 12 Testing & hardening | 299 tests, 93 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED | Linux Py 3.11 + 3.13; Windows 292 + 3 skips (owner, after 15a); GitHub Actions CI green on Linux/Windows/macOS (owner, 2026-09-28) |
 | 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | Windows statements corrected in 14.1; not yet confirmed on a Windows machine |
 
 ### Phase 14 — Release hardening → M6 *(current)*
@@ -150,7 +150,7 @@ Examples for upcoming work:
 and whose installs are reproducible.
 **Prerequisites:** phases 0–13 (done).
 
-#### 14.1 Cross-platform verification & CI — **DONE for Windows** (CI/macOS pending a GitHub repo)
+#### 14.1 Cross-platform verification & CI — **DONE** (CI green on GitHub, owner report 2026-09-28)
 * **Tasks**
   1. Add `.github/workflows/ci.yml`: matrix `ubuntu-latest`, `windows-latest`,
      `macos-latest` × Python 3.11, 3.13; steps: install, `ruff check`, `mypy app`,
@@ -181,8 +181,8 @@ and whose installs are reproducible.
   Fixed with explicit MACs in all test packets and a session-wide conftest guard that
   makes every Scapy route lookup return a non-existent adapter (reproduces the failure on
   any OS). **Owner re-run on Windows: pytest and smoke test all green → 14.1 closed.**
-  Residual: the CI workflow has not executed yet (no repository), so macOS is untested;
-  Windows live capture is a separate manual check (M2).
+  Residual (closed 2026-09-28): the owner pushed to GitHub and reports CI green on all
+  jobs (first macOS coverage); Windows live capture confirmed separately (M2).
 
 #### 14.2 Schema versioning & migrations — **DONE**
 * **Tasks:** store schema version in `PRAGMA user_version`; `app/database/migrations.py`
@@ -216,7 +216,9 @@ LICENSE + version label (owner decisions).*
 * `CHANGELOG.md` created. `pytest` stays in `requirements.txt` for now (owner preference
   not stated; moving it is a 14.3b question).
 
-**14.3b LICENSE + version label — blocked on owner decisions.**
+**14.3b LICENSE + version label — blocked on owner decisions.** Licence: owner leaned to
+GPL-3.0, then deferred after the dependency survey found Scapy core is GPL-2.0-only
+(details and options in `PROJECT_STATUS.md` §6). Version label: still open.
 * **Tasks:** generated lock file (`requirements.lock` via `pip-compile` or `uv pip
   compile`, dev-only tool) used by CI; `CHANGELOG.md`; version policy (owner decision:
   keep 1.0.0 or re-label 0.9.0 until M6); **LICENSE** (owner decision); move `pytest` to
@@ -260,7 +262,7 @@ Split into two sessions (too large to verify properly in one):
 * **Definition of done (Phase 14):** all four items done + M6 exit criteria met.
 
 *Sequencing note (2026-09-28): every remaining Phase 14 item now waits on the owner
-(LICENSE/version, GitHub repo for CI/macOS, Windows live capture). Phase 15 starts
+(LICENSE/version, GitHub repo for CI/macOS; Windows live capture has since been confirmed). Phase 15 starts
 meanwhile, with the diagnostic that helps the owner's Windows live-capture test first.
 M6 stays open until its exit criteria are met.*
 

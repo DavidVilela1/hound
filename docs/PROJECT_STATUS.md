@@ -6,7 +6,7 @@
 
 ```text
 Last updated:      2026-09-28 (session 7: task 15a `doctor` environment check)
-Current milestone: M6 — Production-quality local build   (M0–M5 reached, M2 on Linux only)
+Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
 Current phase:     Phase 15 — Observability & diagnostics (15a done), started while the
                    remaining Phase 14 items wait on the owner
 Current task:      none in progress
@@ -15,9 +15,9 @@ Overall state:     Working system with a versioned, upgrade-safe database, an en
                    tested capture daemon, an automatically tested dashboard, reproducible
                    hash-checked installs and a read-only `doctor` setup check (93 % line
                    coverage). Linux: 299 tests pass (Py 3.11 + 3.13, from the lock). Owner's
-                   Windows laptop:
-                   last run 231 + 2 expected skips (before 14.4b). Not yet exercised: live
-                   capture on Windows, macOS, CI.
+                   Windows laptop: 292 passed + 3 expected skips (current code). Not yet
+                   exercised: macOS, CI. Live capture works on the owner's Windows laptop
+                   (split mode, Npcap, "Wi-Fi").
 ```
 
 ## 1. Baseline assessment
@@ -26,7 +26,8 @@ Overall state:     Working system with a versioned, upgrade-safe database, an en
 AREA            STATUS          NOTES
 ------------------------------------------------------------------------------------------
 Architecture    VERIFIED        Layered modular monolith; module-import check clean; ADR-001..019
-Ingestion       VERIFIED*       Parser/capture/daemon/demo; live capture on Linux lo only.
+Ingestion       VERIFIED*       Parser/capture/daemon/demo; live capture on Linux (lo) and on
+                                Windows (Wi-Fi, owner report).
                                 Daemon split mode tested end to end (96%); parser fuzzed
 Event model     VERIFIED        Frozen Pydantic NetworkEvent; used by all sources
 Backend         VERIFIED        Worker thread, retention, error isolation, broadcaster
@@ -37,7 +38,7 @@ Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real 
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
 Testing         VERIFIED*       299 tests, 93% line coverage; all pass on Linux (Py 3.11 + 3.13);
-                                Windows last confirmed at 231 (before 14.4b); CI never run
+                                Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
                                 S-3 fuzz, S-6 documented, S-8 done; daemon ignores proxies
@@ -98,8 +99,11 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s3 | `pytest` with 14.2 — **owner's Windows laptop** | Windows | 223 passed, 2 skipped (the two POSIX file-mode tests; expected) |
 | 2026-09-28 s3 | Smoke test with 14.2 on Windows | Windows | owner replied "good" after the request; output not shared |
 | 2026-09-28 s4 | `pytest` with 14.4a — **owner's Windows laptop** | Windows | 231 passed, 2 skipped (POSIX file-mode tests; expected) in 12.7 s |
-| — | Windows re-run with the URL fix | — | **not run yet** (expected: 292 passed, 3 skipped) |
-| — | `.github/workflows/ci.yml` on GitHub; live capture on Windows; anything on macOS | — | **not run** |
+| 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
+| 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
+| 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-28 s7 | Dependency licence survey (installed runtime lock env, package metadata + Scapy SPDX headers) | Py 3.11 | all permissive or weak-copyleft (MIT, BSD, Apache-2.0, MPL-2.0, PSF) **except Scapy: GPL-2.0-only** (287 files incl. `scapy/__init__.py`; 83 files GPL-2.0-or-later). Note: Apache-2.0 packages (e.g. aiohttp, yarl, python-multipart) are, per the FSF, incompatible with GPLv2 — so the Scapy question exists independently of Hound's own licence. Hound ships source only; users install dependencies from PyPI |
+| 2026-09-28 s7 | `.github/workflows/ci.yml` on GitHub (Linux/Windows/macOS × Py 3.11/3.13, audit, newest-deps job) | GitHub Actions | owner: "CI is working perfectly" — first macOS coverage. Run logs not shared |
 
 ## 3. Completed
 - Phases 0–13 of the original plan (ROADMAP §F).
@@ -185,17 +189,13 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
    queue high-water mark, batch latency p50/p95, parser malformed count, DB size. Only
    counters that drive a decision. Unblocked.
 2. 14.3b LICENSE + version label, once the owner decides.
-3. When the project is on GitHub: confirm the CI run (macOS coverage).
-4. 15c commit the benchmark script.
+3. 15c commit the benchmark script.
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
-| License | Choose a license (e.g. MIT, Apache-2.0, GPL-3.0, or "all rights reserved") | 14.3b |
+| License | Owner leans to GPL-3.0 but deferred the decision (2026-09-28) after the dependency check below: Scapy core is **GPL-2.0-only**, which the FSF treats as incompatible with GPL-3.0 in a combined program; options considered: GPL-2.0-or-later, GPL-3.0-or-later, GPL-3.0-only. Not legal advice — worth a qualified opinion before publishing a release | 14.3b |
 | Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3b |
-| Windows re-run | `python -m pytest -q` with the fix (expect 292 passed, 3 skipped) and `python run.py doctor` | confirming 15a and the URL fix on Windows |
-| CI on GitHub | Push the project to a GitHub repository | macOS verification; automatic checks on every change |
-| Windows live capture | Install Npcap; `python run.py doctor -i "Wi-Fi"` should show no problems; then `python run.py capture -i "Wi-Fi"` from an Administrator shell with the server running | M2 on Windows |
 | Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host) | M7 |
 
 ## 7. Technical debt
@@ -204,8 +204,6 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 - None open. (Schema versioning — the previous critical item — was resolved by 14.2.)
 
 **Important**
-- CI workflow never executed and macOS never tested → first push to GitHub.
-- Live capture never run on Windows (the owner's platform) → owner test with Npcap.
 - Locked versions only move when someone re-locks; the audit job and the non-blocking
   newest-versions CI job are the signals (both inert until the project is on GitHub).
 
@@ -223,8 +221,6 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   Windows branch runs only on Windows).
 - `doctor`'s database-writability check uses `os.access`, which ignores Windows ACL
   details; a false "writable" is possible there (the server then reports the real error).
-- `doctor`'s SQLite URI form (`file:///C:/…`) is verified on Linux only; the Windows run of
-  `test_database_path_with_spaces_and_special_characters` will confirm it.
 - The test suite now takes ~21–24 s: dashboard ~9.7 s, daemon ~4.5 s, doctor ~3 s (2 s
   of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
@@ -248,7 +244,8 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 - Risk levels are heuristics, not malware detection; not yet tuned on real traffic.
 - Devices are identified by IP address.
 - Single process, single user, localhost only; no dashboard authentication.
-- Live capture verified on Linux only.
+- Live capture verified on Linux (loopback) and Windows (Wi-Fi, owner's report); macOS not
+  yet. On Wi-Fi, only this computer's own traffic is visible (see README §9).
 - In a cloud-synced folder (OneDrive etc.) the database and ingest token are uploaded, and
   sync can lock SQLite; documented in the README with workarounds.
 - A database written by a newer Hound cannot be opened by an older one (by design; no
