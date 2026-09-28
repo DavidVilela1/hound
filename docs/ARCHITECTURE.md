@@ -179,9 +179,11 @@ tested · extension points. File references are to the current code.
 * **Responsibility:** privileged process: capture → local queue → batched POSTs.
 * **Failure modes:** API down (exponential back-off 1→16 s, 5 attempts, then the batch is
   dropped and counted); bad token (logged, not retried); own traffic captured (filtered by
-  `SelfTrafficFilter`, ADR-014).
-* **Tests:** `tests/test_forwarder.py` (injected transport). `daemon.py` itself has
-  **0 % automated coverage** — verified manually (split mode, server as `nobody`).
+  `SelfTrafficFilter`, ADR-014); proxy in the environment (ignored for the local API).
+* **Tests:** `tests/test_forwarder.py` (injected transport); `tests/test_daemon.py` runs
+  split mode end to end without privileges — real parser → daemon → forwarder → live
+  uvicorn server → pipeline → SQLite — with only the Scapy sniffer faked (96 % coverage of
+  `daemon.py`). Daemon → API traffic never uses proxy settings (ADR-016 revisited).
 
 ## 4. Dependency rules (enforced by convention, checked in review)
 

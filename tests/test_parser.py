@@ -167,3 +167,59 @@ def test_parser_accepts_non_packet_garbage() -> None:
     parser = PacketParser()
     assert parser.parse(object()) is None  # type: ignore[arg-type]
     assert parser.stats.malformed == 1
+
+
+def test_fuzz_random_and_mutated_frames_never_raise() -> None:
+    """S-3: the parser runs inside the privileged capture process and must survive any input.
+
+    Deterministic (fixed seed): random frames, plus valid DNS/SYN frames with random byte
+    flips and truncations. Every frame must be counted exactly once as parsed, ignored or
+    malformed, and anything parsed must still be a valid NetworkEvent.
+    """
+    import random
+
+    from app.models.events import NetworkEvent
+
+    rng = random.Random(1337)
+    seeds = [
+        bytes(dns_query()),
+        bytes(wire(eth() / IP(src="192.168.1.10", dst="93.184.216.34") / TCP(sport=40000, dport=443, flags="S"))),
+        bytes(
+            wire(
+                eth()
+                / IP(src="192.168.1.1", dst="192.168.1.10")
+                / UDP(sport=53, dport=5000)
+                / DNS(
+                    id=7,
+                    qr=1,
+                    qd=DNSQR(qname="example.com"),
+                    an=[DNSRR(rrname="example.com", type="A", rdata="93.184.216.34")],
+                )
+            )
+        ),
+    ]
+    frames: list[bytes] = [bytes(rng.getrandbits(8) for _ in range(rng.randint(0, 200))) for _ in range(800)]
+    for _ in range(1600):
+        frame = bytearray(rng.choice(seeds))
+        for _ in range(rng.randint(1, 6)):
+            frame[rng.randrange(len(frame))] = rng.getrandbits(8)
+        if rng.random() < 0.3:
+            del frame[rng.randrange(1, len(frame)) :]
+        frames.append(bytes(frame))
+
+    def as_sniffed(raw: bytes) -> Packet:
+        # Scapy's capture socket (SuperSocket.recv) falls back to a Raw packet when
+        # dissection fails, so that is what the parser receives for undissectable frames.
+        try:
+            return Ether(raw)
+        except Exception:
+            return Raw(raw)
+
+    parser = PacketParser("fuzz0")
+    for raw in frames:
+        event = parser.parse(as_sniffed(raw))  # must never raise
+        if event is not None:
+            assert isinstance(event, NetworkEvent)
+    stats = parser.stats
+    assert stats.parsed + stats.ignored + stats.malformed == len(frames)
+    assert stats.parsed > 0 and stats.malformed > 0  # the corpus really exercised both paths

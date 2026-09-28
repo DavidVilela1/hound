@@ -12,12 +12,11 @@ import signal
 import threading
 import time
 import urllib.error
-import urllib.request
 from types import FrameType
 
 from app.core.config import Settings
 from app.ingestion.capture import CaptureError, PacketCaptureService
-from app.ingestion.forwarder import HttpEventForwarder, SelfTrafficFilter
+from app.ingestion.forwarder import DIRECT_OPENER, HttpEventForwarder, SelfTrafficFilter
 from app.ingestion.queue import EventQueue
 from app.models.events import NetworkEvent
 
@@ -29,7 +28,7 @@ STATUS_POLL_SECONDS = 2.0
 
 def _api_reachable(api_url: str, timeout: float = 3.0) -> bool:
     try:
-        with urllib.request.urlopen(api_url.rstrip("/") + "/health", timeout=timeout) as resp:  # noqa: S310
+        with DIRECT_OPENER.open(api_url.rstrip("/") + "/health", timeout=timeout) as resp:
             return 200 <= resp.status < 600
     except urllib.error.HTTPError:
         return True  # the server answered, even if degraded
@@ -58,9 +57,13 @@ class CaptureDaemon:
             return False  # our own forwarding connection, not network activity
         return self._queue.offer(event)
 
+    def stop(self) -> None:
+        """Ask :meth:`run` to finish (thread-safe; used by signal handlers and embedders)."""
+        self._stop.set()
+
     def _handle_signal(self, signum: int, _frame: FrameType | None) -> None:
         logger.info("Shutdown requested", extra={"signal": signum})
-        self._stop.set()
+        self.stop()
 
     def run(self) -> int:
         """Run until interrupted. Returns a process exit code."""

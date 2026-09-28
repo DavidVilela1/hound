@@ -5,15 +5,15 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 3: task 14.2 schema versioning)
+Last updated:      2026-09-28 (session 4: task 14.4a capture-daemon tests)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached, M2 on Linux only)
-Current phase:     Phase 14 — Release hardening (14.1 done for Windows, 14.2 done)
+Current phase:     Phase 14 — Release hardening (14.1 done for Windows, 14.2 done, 14.4a done)
 Current task:      none in progress
-Next task:         14.4 Automated coverage for the capture daemon and dashboard
-Overall state:     Working system with a versioned, upgrade-safe database. Tests and the demo
-                   smoke test pass on Linux (Py 3.11 + 3.13); owner's Windows laptop was green
-                   before this session's change and has not been re-run since. Not yet
-                   exercised: live capture on Windows, macOS, the GitHub CI workflow.
+Next task:         14.4b Automated tests for the dashboard
+Overall state:     Working system with a versioned, upgrade-safe database and an end-to-end
+                   tested capture daemon. Tests and the demo smoke test pass on Linux
+                   (Py 3.11 + 3.13); the owner's Windows laptop was green for 14.2 and has
+                   not run 14.4a yet. Not yet exercised: live capture on Windows, macOS, CI.
 ```
 
 ## 1. Baseline assessment
@@ -23,7 +23,7 @@ AREA            STATUS          NOTES
 ------------------------------------------------------------------------------------------
 Architecture    VERIFIED        Layered modular monolith; module-import check clean; ADR-001..018
 Ingestion       VERIFIED*       Parser/capture/daemon/demo; live capture on Linux lo only.
-                                Accepts Windows NPF interface names. Daemon 0% automated coverage
+                                Daemon split mode tested end to end (96%); parser fuzzed
 Event model     VERIFIED        Frozen Pydantic NetworkEvent; used by all sources
 Backend         VERIFIED        Worker thread, retention, error isolation, broadcaster
 Database        VERIFIED        WAL, indexes, retention; schema v1 in PRAGMA user_version with
@@ -31,11 +31,11 @@ Database        VERIFIED        WAL, indexes, retention; schema v1 in PRAGMA use
 Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS correlation
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        FUNCTIONAL      All views work (manual Playwright check); 0% automated tests
-Testing         FUNCTIONAL      225 tests, 80% line coverage; all pass on Linux (Py 3.11 + 3.13);
-                                Windows green at 209 tests (before 14.2); isolated from host routing
+Testing         FUNCTIONAL      233 tests, 83% line coverage; all pass on Linux (Py 3.11 + 3.13);
+                                Windows last run at 14.2; dashboard still 0% automated
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
-                                S-6 (Windows token) documented; S-8 (DB file modes) done
+                                S-3 fuzz, S-6 documented, S-8 done; daemon ignores proxies
 Documentation   FUNCTIONAL      README covers upgrades/refusals; Windows guidance owner-checked
 Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file, LICENSE,
                                 CHANGELOG; version says 1.0.0 before any release
@@ -46,6 +46,13 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-28 s4 | `python -m compileall`; `ruff check`; `ruff format --check` | Py 3.11 / 3.13 | pass / clean / 80 files formatted |
+| 2026-09-28 s4 | `mypy --platform {linux,win32,darwin}` | mypy 1.20.2 and 2.3.1 | clean ×6 (59 files) |
+| 2026-09-28 s4 | `pytest` | Py 3.11.15 / Py 3.13.7 | 233 passed / 233 passed; coverage 83 % (`daemon.py` 96 %, `forwarder.py` 93 %) |
+| 2026-09-28 s4 | `tests/test_daemon.py` repeated 5× | Py 3.11 | 7/7 each run (~4.5 s); no flakiness seen |
+| 2026-09-28 s4 | Proxy test before the fix (fresh process, `HTTP(S)_PROXY` = dead proxy, no `NO_PROXY`) | Py 3.11 | **failed** — daemon delivered nothing; after fix: pass |
+| 2026-09-28 s4 | Mutation check: parser error handling / self-traffic filter / proxy bypass removed | Py 3.11 | each caught (the first in-process proxy test missed it → rewritten as subprocess test) |
+| 2026-09-28 s4 | `scripts/smoke_test.py` | Py 3.11 / Py 3.13 | 12/12 / 12/12 |
 | 2026-09-28 s3 | `python -m compileall -q app tests scripts run.py` | Linux, Py 3.11.15 | pass |
 | 2026-09-28 s3 | `ruff check …`; `ruff format --check …` | Py 3.11 / 3.13 | clean / 79 files formatted |
 | 2026-09-28 s3 | `mypy --platform {linux,win32,darwin}` | mypy 1.20.2 (Py 3.11) and 2.3.1 (Py 3.13) | clean ×6 (59 files) |
@@ -60,7 +67,9 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 | 2026-09-28 s2 | `pip-audit -r requirements.txt`; `actionlint` on the CI workflow | Py 3.13 | no vulnerabilities; no issues |
 | 2026-09-28 s1 | Live capture, split mode (server as `nobody`, daemon root, `lo`) | Linux | DNS + SYN captured; blocklist hit flagged |
 | 2026-09-28 s1 | Throughput/latency benchmark (ROADMAP §I) | Linux sandbox | ≈ 5 400 events/s; `/api/stats` 71 ms @ 250 k rows |
-| — | 14.2 code on Windows (pytest + smoke) | Windows | **not run yet** |
+| 2026-09-28 s3 | `pytest` with 14.2 — **owner's Windows laptop** | Windows | 223 passed, 2 skipped (the two POSIX file-mode tests; expected) |
+| 2026-09-28 s3 | Smoke test with 14.2 on Windows | Windows | owner replied "good" after the request; output not shared |
+| — | 14.4a on Windows (pytest) | Windows | not run yet |
 | — | `.github/workflows/ci.yml` on GitHub; live capture on Windows; anything on macOS | — | **not run** |
 
 ## 3. Completed
@@ -80,14 +89,22 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
   - `tests/test_migrations.py` (16 tests), including a drift guard: the migrated schema
     must equal the ORM models.
   - README: "Database and upgrades", two troubleshooting rows, file-permission note.
+- **14.4a Capture daemon + parser fuzzing (session 4):**
+  - `tests/test_daemon.py` (7 tests): split mode end to end without privileges — fake
+    sniffer → real parser → `CaptureDaemon` → forwarder → live uvicorn server → pipeline →
+    SQLite; self-traffic filtering; exit codes 2 and 3; API down then recovering;
+    statistics logging; `capture` without a token; proxy settings.
+  - **Bug fixed:** daemon → API HTTP honoured `HTTP(S)_PROXY`, so behind a proxy nothing
+    was delivered. Now a proxy-free opener (ADR-016 revisited; README §11 notes it).
+  - Parser fuzz test (S-3): 2 400 random/mutated/truncated frames, deterministic.
+  - `CaptureDaemon.stop()` (public, thread-safe) for tests and future service wrappers.
 
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **14.4 Automated coverage for the capture daemon and dashboard.** `daemon.py`,
-   `dashboard.py` and `components.py` have 0 % automated coverage; also fold the smoke test
-   into pytest (opt-in marker). Fully unblocked; moved ahead of 14.3 (see ROADMAP).
+1. **14.4b Automated tests for the dashboard.** `dashboard.py` and `components.py` are at
+   0 % automated coverage (only manual Playwright checks). Fully unblocked.
 2. 14.3 Reproducible installs & release hygiene: lock file, CHANGELOG, plus LICENSE and
    version label once decided.
 3. When the project is on GitHub: confirm the CI run (macOS coverage).
@@ -95,7 +112,7 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
-| Windows re-run | `pytest` and `python scripts\smoke_test.py` with this update | confirming 14.2 on Windows |
+| Windows re-run | `pytest` with this update (adds real-server daemon tests) | confirming 14.4a on Windows |
 | License | Choose a license (e.g. MIT, Apache-2.0, GPL-3.0, or "all rights reserved") | 14.3 |
 | Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3 |
 | CI on GitHub | Push the project to a GitHub repository | macOS verification; automatic checks on every change |
@@ -110,7 +127,7 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 **Important**
 - CI workflow never executed and macOS never tested → first push to GitHub.
 - Live capture never run on Windows (the owner's platform) → owner test with Npcap.
-- `dashboard.py`/`components.py` and `daemon.py` have 0 % automated coverage → 14.4 (next).
+- `dashboard.py`/`components.py` have 0 % automated coverage → 14.4b (next).
 - No lock file. Runtime installs and dev tools resolve to the newest compatible
   versions; mypy 2.x already changed results once → 14.3.
 
@@ -124,7 +141,9 @@ Packaging       IN_PROGRESS     CI workflow + requirements-dev.txt; no lock file
 - The forwarder opens one TCP connection per batch (ADR-016); fine at the current cadence.
 - `Database.initialize()` runs twice at server start (CLI pre-flight + lifespan); the second
   run is a no-op version check. Harmless; revisit only if start-up time matters.
-- `cli.py` 66 % and `logging_config.py` 40 % coverage.
+- `cli.py` 74 % and `logging_config.py` 40 % coverage.
+- The test suite now takes ~10 s (was ~5 s): the daemon tests start real servers. Fine;
+  revisit with an opt-in marker only if it grows much further.
 
 **Future**
 - Package named `app` (ADR-011) → rename before publishing a wheel (Phase 21).

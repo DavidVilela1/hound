@@ -308,7 +308,8 @@ server writes to `data/.ingest_token` (mode `0600`) on first start; the daemon
 reads the same file, so no setup is needed. Alternatively set the same
 `HOUND_INGEST_TOKEN` (≥ 24 characters) for both processes. Use `--api-url` if
 the server listens elsewhere. The daemon ignores its own connections to the API,
-so capturing on loopback does not create a feedback loop.
+so capturing on loopback does not create a feedback loop, and it always talks to the API
+directly — `HTTP_PROXY`/`HTTPS_PROXY` and system proxy settings are not used for it.
 
 ### All-in-one (simpler, whole process privileged)
 

@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (14.2 done; next: 14.4, moved ahead of 14.3 — see 14.3).
+> Last reviewed: 2026-09-28 (14.4a done; next: 14.4b dashboard tests).
 
 ---
 
@@ -133,7 +133,7 @@ Examples for upcoming work:
 | 1 Foundation | `app/core`, `run.py`, CLI, `.env.example` | VERIFIED | `tests/test_config.py`, `tests/test_cli_and_security.py` |
 | 2 Domain/event model | `app/models` | VERIFIED | `tests/test_models.py` |
 | 3 Database | `app/database` | VERIFIED | `tests/test_database.py`, `tests/test_migrations.py` — versioned since 14.2 |
-| 4 Packet ingestion | `app/ingestion/{capture,parser,daemon,forwarder}` | VERIFIED (Linux) | unit tests + manual live capture; daemon 0 % automated coverage (14.4) |
+| 4 Packet ingestion | `app/ingestion/{capture,parser,daemon,forwarder}` | VERIFIED (Linux) | unit + split-mode end-to-end tests (`tests/test_daemon.py`); live capture manual |
 | 5 Processing pipeline | `app/services/{processing,store,runtime}` | VERIFIED | `tests/test_processing.py` |
 | 6 Enrichment | `app/enrichment` | VERIFIED | `tests/test_enrichment.py` |
 | 7 Risk engine | `app/risk` | VERIFIED | `tests/test_risk.py` — real-traffic tuning pending (16) |
@@ -211,12 +211,33 @@ unaffected.*
   an optional `[dev]` extra if the owner prefers a lean runtime install.
 * **Acceptance:** `pip install -r requirements.lock` reproduces CI's environment.
 
-#### 14.4 Automated coverage for the daemon and dashboard ← **next task**
-* **Tasks:** move the smoke test into pytest (`-m e2e`, skipped by default or run in CI);
-  test `CaptureDaemon` with a fake capture and a live test server (split mode without
-  privileges); NiceGUI page test using NiceGUI's `User` testing fixture if compatible,
-  otherwise an optional Playwright job in CI.
-* **Acceptance:** `daemon.py` and `dashboard.py` no longer at 0 % coverage.
+#### 14.4 Automated coverage for the daemon and dashboard
+Split into two sessions (too large to verify properly in one):
+
+**14.4a Capture daemon + parser fuzzing — DONE (2026-09-28)**
+* `tests/test_daemon.py`: split mode end to end without privileges — a fake capture feeds
+  real frames through the real `PacketParser` into `CaptureDaemon`, which forwards to a
+  live uvicorn server; covers delivery + server-side enrichment, self-traffic filtering,
+  capture start failure (exit 2), failure while running (exit 3), API down at start then
+  recovering, statistics logging, `capture` without a token, and proxy settings.
+* **Bug found and fixed:** the daemon's HTTP calls honoured `HTTP(S)_PROXY`, so behind a
+  proxy it delivered nothing (ADR-016 revisited). The test runs in a fresh process because
+  the opener reads the environment at import time — an in-process version passed even
+  with the bug.
+* S-3: deterministic fuzz test (800 random + 1 600 mutated/truncated frames, dissected the
+  way Scapy's capture socket does).
+* `CaptureDaemon.stop()` added (public, thread-safe).
+* Coverage: `daemon.py` 0 → 96 %, `forwarder.py` 75 → 93 %, total 80 → 83 %.
+  Mutation-checked: disabling the parser's error handling, the self-traffic filter or the
+  proxy bypass each makes a test fail.
+* Dropped from the plan: "move the smoke test into pytest" — CI already runs
+  `scripts/smoke_test.py` directly (since 14.1), so it would only duplicate it.
+
+**14.4b Dashboard ← next task**
+* **Tasks:** automated test of the NiceGUI page (renders, live feed updates, event and
+  device dialogs, error banner when the API is unreachable) — NiceGUI's `User` testing
+  fixture if it works with `ui.run_with`, otherwise an optional Playwright check.
+* **Acceptance:** `dashboard.py` and `components.py` no longer at 0 % coverage.
 * **Definition of done (Phase 14):** all four items done + M6 exit criteria met.
 
 ### Phase 15 — Observability & diagnostics
@@ -287,10 +308,10 @@ A task is **done** only when all apply:
                  E2E  (smoke test 12 checks; manual live capture; manual Playwright)
                /      \
         API tests        Integration
-     (26: test_api,     (36: database, migrations, processing, demo)
+     (26: test_api,     (43: database, migrations, processing, demo, daemon split mode)
       test_frontend)
           /                      \
-   Unit (163: config, netutils, models, parser, capture*, enrichment, risk, forwarder, cli)
+   Unit (164: config, netutils, models, parser incl. fuzz, capture*, enrichment, risk, forwarder, cli)
 ```
 \* capture tests use a fake sniffer — no root, no traffic.
 
@@ -308,8 +329,9 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28, after 14.2): 225 tests, 80 % line coverage (`migrations.py` 100 %); gaps: `frontend/dashboard.py`
-& `components.py` 0 %, `ingestion/daemon.py` 0 %, `cli.py` 66 %, `core/logging_config.py` 40 %.
+Current numbers (2026-09-28, after 14.4a): 233 tests, 83 % line coverage (`migrations.py` 100 %,
+`daemon.py` 96 %); gaps: `frontend/dashboard.py` & `components.py` 0 %, `cli.py` 74 %,
+`core/logging_config.py` 40 %. The suite takes ~10 s; the daemon tests start real servers (~4.5 s).
 
 ---
 
@@ -351,7 +373,7 @@ batch latency, WS per-client drops, `/api/stats` latency.
 |---|---|---|---|
 | S-1 | Capture | Only the daemon is privileged; no DB/API/UI code in it | Done (ADR-002) |
 | S-2 | Capture | Interface validated against Scapy's list (name, description or Windows NPF name) | Done (14.1) |
-| S-3 | Capture | Parser never raises; truncation sweep test | Done; add random-bytes fuzz test (14.4) |
+| S-3 | Capture | Parser never raises; truncation sweep + deterministic random/mutated-frame fuzz test | Done (14.4a) |
 | S-4 | API | Loopback bind, Host allow-list, WS Origin check, warning on non-loopback bind | Done |
 | S-5 | API | Rate limiting | Not needed on localhost; revisit with remote dashboard |
 | S-6 | Config | Ingest token file: `0600` on POSIX; Windows relies on profile ACLs — documented in README §12, plus a cloud-sync warning in §18 | Done (documented, 14.1) |

@@ -169,6 +169,12 @@ change their status or add a "Revisited" note.
   injectable transport for tests.
 * **Reason:** keep the privileged process's code surface minimal.
 * **Consequences:** one TCP connection per batch (no keep-alive); fine at batch cadence.
+* **Revisited 2026-09-28 (14.4a):** plain `urlopen` honours `HTTP(S)_PROXY` (and Windows'
+  system proxy), so on a machine with a proxy and no `NO_PROXY` exception the daemon sent
+  every batch to the proxy and delivered nothing. Found by a new test run in a fresh
+  process; fixed with a module-level opener built with `ProxyHandler({})` for all
+  daemon → API traffic. Decision unchanged (stdlib only); the local channel never uses
+  proxies, matching the dashboard's clients.
 
 ## ADR-017 — CI on GitHub Actions; dev tooling declared in the repo
 * **Context:** the owner develops on Windows, but everything had only ever run on Linux.

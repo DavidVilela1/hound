@@ -71,10 +71,15 @@ Transport = Callable[[str, bytes, dict[str, str], float], int]
 """``(url, body, headers, timeout) -> HTTP status``; injectable for tests."""
 
 
+# Talks to the local Hound API only, so proxy settings from the environment (or Windows'
+# system proxy) must never apply: a proxy would swallow or reject localhost traffic.
+DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def urllib_transport(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (scheme validated)
+        with DIRECT_OPENER.open(request, timeout=timeout) as response:  # scheme validated in __init__
             return int(response.status)
     except urllib.error.HTTPError as exc:
         return int(exc.code)
