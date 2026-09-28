@@ -15,6 +15,36 @@ from app.models.events import NetworkEvent, PacketType, TransportProtocol
 
 BASE_TIME = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
 
+# Stand-in for an adapter Scapy cannot resolve. Found on the owner's Windows laptop: with no
+# IPv6 route, Scapy picked "Microsoft KM-TEST Loopback Adapter" and failed to build packets.
+UNKNOWN_ADAPTER = "Microsoft KM-TEST Loopback Adapter"
+TEST_SRC_MAC = "02:00:00:00:00:10"
+TEST_DST_MAC = "02:00:00:00:00:01"
+
+
+def eth() -> Any:
+    """Ethernet header with explicit MACs, so building a packet never consults host routing."""
+    from scapy.layers.l2 import Ether
+
+    return Ether(src=TEST_SRC_MAC, dst=TEST_DST_MAC)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_from_host_routing() -> Iterator[None]:
+    """Tests must not depend on this machine's routing table.
+
+    Every Scapy route lookup answers with an adapter that does not exist, so a test that
+    silently relies on host network configuration fails on every machine, not only on
+    machines whose routes happen to differ from the developer's.
+    """
+    from scapy.route import Route
+    from scapy.route6 import Route6
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Route, "route", lambda self, *a, **k: (UNKNOWN_ADAPTER, "0.0.0.0", "0.0.0.0"))
+        mp.setattr(Route6, "route", lambda self, *a, **k: (UNKNOWN_ADAPTER, "::", "::"))
+        yield
+
 
 @pytest.fixture
 def blocklist_file(tmp_path: Path) -> Path:

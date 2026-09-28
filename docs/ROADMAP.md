@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (baseline after the initial end-to-end build).
+> Last reviewed: 2026-09-28 (14.1 closed for Windows; next: 14.2).
 
 ---
 
@@ -141,8 +141,8 @@ Examples for upcoming work:
 | 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
 | 10 Dashboard | `app/frontend` | FUNCTIONAL | manual Playwright only; 0 % automated (14.4) |
 | 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
-| 12 Testing & hardening | 207 tests, 79 % line coverage, ruff + mypy clean | FUNCTIONAL | Linux only (14.1) |
-| 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | two Windows statements unverified/incorrect (14.1) |
+| 12 Testing & hardening | 209 tests, ruff + mypy clean (mypy also checked for win32/darwin) | FUNCTIONAL | executed on Linux only (Py 3.11 + 3.13); Windows/macOS via CI once on GitHub (14.1) |
+| 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | Windows statements corrected in 14.1; not yet confirmed on a Windows machine |
 
 ### Phase 14 — Release hardening → M6 *(current)*
 
@@ -150,7 +150,7 @@ Examples for upcoming work:
 and whose installs are reproducible.
 **Prerequisites:** phases 0–13 (done).
 
-#### 14.1 Cross-platform verification & CI ← **next task**
+#### 14.1 Cross-platform verification & CI — **DONE for Windows** (CI/macOS pending a GitHub repo)
 * **Tasks**
   1. Add `.github/workflows/ci.yml`: matrix `ubuntu-latest`, `windows-latest`,
      `macos-latest` × Python 3.11, 3.13; steps: install, `ruff check`, `mypy app`,
@@ -169,8 +169,22 @@ and whose installs are reproducible.
   teardown, NiceGUI/uvicorn on Proactor loop). Mitigation: fix forward inside this task;
   anything larger becomes its own item.
 * **Needs from owner:** a GitHub repository (or run `pytest` locally and share output).
+* **Outcome (2026-09-28):** all four tasks implemented. Added `requirements-dev.txt`
+  (ruff, mypy, pip-audit) and moved lint/type settings into `pyproject.toml` so local runs
+  match CI (ADR-017). Also fixed: `_is_privileged()` now detects an elevated Administrator
+  on Windows (it always returned False there). Replicating CI on a fresh Python 3.13 env
+  surfaced 5 errors from mypy 2.x (stricter than 1.x) that CI would have hit: Pydantic
+  `Field(None, …)` positional defaults (now `default=`), an `int` returned as `bool`, and an
+  untyped dashboard value — all fixed; OpenAPI schema verified byte-identical.
+  **First Windows run (owner):** 208/209 — `test_ipv6_dns_query` built a packet with a bare
+  `Ether()`, so Scapy consulted the host's IPv6 route and hit an adapter it can't resolve.
+  Fixed with explicit MACs in all test packets and a session-wide conftest guard that
+  makes every Scapy route lookup return a non-existent adapter (reproduces the failure on
+  any OS). **Owner re-run on Windows: pytest and smoke test all green → 14.1 closed.**
+  Residual: the CI workflow has not executed yet (no repository), so macOS is untested;
+  Windows live capture is a separate manual check (M2).
 
-#### 14.2 Schema versioning & migrations
+#### 14.2 Schema versioning & migrations ← **next task**
 * **Tasks:** store schema version in `PRAGMA user_version`; `app/database/migrations.py`
   with ordered `(version, fn)` steps executed in a transaction at start-up; refuse to start
   (clear message) on a DB newer than the code; mark current schema as version 1.
@@ -265,13 +279,13 @@ A task is **done** only when all apply:
      (26: test_api,     (20: database, processing, demo)
       test_frontend)
           /                      \
-   Unit (161: config, netutils, models, parser, capture*, enrichment, risk, forwarder, cli)
+   Unit (163: config, netutils, models, parser, capture*, enrichment, risk, forwarder, cli)
 ```
 \* capture tests use a fake sniffer — no root, no traffic.
 
 | Level | Belongs here | Rules |
 |---|---|---|
-| Unit | parsing, normalisation, validation, each risk signal, blocklist, geo, config | pure, deterministic, event-time based |
+| Unit | parsing, normalisation, validation, each risk signal, blocklist, geo, config | pure, deterministic, event-time based; test packets use explicit MACs (`tests.conftest.eth()`) — host routing is disabled for the whole suite |
 | Integration | repositories on a temp SQLite file, processing worker, demo pipeline | temp dirs only; no network |
 | API | HTTP status codes, schemas, auth, WS, Host/Origin checks | FastAPI `TestClient` / `httpx.ASGITransport` |
 | E2E | server + demo + WS; (14.4) daemon split mode; dashboard render | free port, temp DB; opt-in marker |
@@ -283,8 +297,8 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28): 207 tests, 79 % line coverage; gaps: `frontend/dashboard.py`
-& `components.py` 0 %, `ingestion/daemon.py` 0 %, `cli.py` 52 %, `core/logging_config.py` 40 %.
+Current numbers (2026-09-28, after 14.1): 209 tests, 79 % line coverage; gaps: `frontend/dashboard.py`
+& `components.py` 0 %, `ingestion/daemon.py` 0 %, `cli.py` 51 %, `core/logging_config.py` 40 %.
 
 ---
 
@@ -325,15 +339,15 @@ batch latency, WS per-client drops, `/api/stats` latency.
 | ID | Area | Item | Status |
 |---|---|---|---|
 | S-1 | Capture | Only the daemon is privileged; no DB/API/UI code in it | Done (ADR-002) |
-| S-2 | Capture | Interface validated against Scapy's list; add NPF names | Partly (14.1) |
+| S-2 | Capture | Interface validated against Scapy's list (name, description or Windows NPF name) | Done (14.1) |
 | S-3 | Capture | Parser never raises; truncation sweep test | Done; add random-bytes fuzz test (14.4) |
 | S-4 | API | Loopback bind, Host allow-list, WS Origin check, warning on non-loopback bind | Done |
 | S-5 | API | Rate limiting | Not needed on localhost; revisit with remote dashboard |
-| S-6 | Config | Ingest token file: `0600` on POSIX; **Windows relies on profile ACLs** — document or store under `%LOCALAPPDATA%` | Open (14.1) |
+| S-6 | Config | Ingest token file: `0600` on POSIX; Windows relies on profile ACLs — documented in README §12, plus a cloud-sync warning in §18 | Done (documented, 14.1) |
 | S-7 | API | Cap inbound WS frame size (clients never need to send) | Open (15) |
 | S-8 | Database | Create `data/` as `0700` and DB `0600` on POSIX (contains browsing metadata) | Open (14.2) |
 | S-9 | Database | Bound parameters only; LIKE escaping; retention | Done |
-| S-10 | Dependencies | Lock file + `pip-audit` in CI (2026-09-28: no known vulnerabilities) | Open (14.1/14.3) |
+| S-10 | Dependencies | `pip-audit` job in CI (2026-09-28 local run: no known vulnerabilities); lock file still missing | Partly (lock file: 14.3) |
 | S-11 | Application | Domains logged only at DEBUG; review before adding new log lines | Done; keep |
 | S-12 | Application | Strict CSP for the dashboard | Blocked by NiceGUI inline scripts; revisit if remote access is ever added |
 | S-13 | Remote access | Auth (token/session) before any non-loopback deployment | Future (Phase 21+) |
@@ -344,7 +358,7 @@ batch latency, WS per-client drops, `/api/stats` latency.
 
 | Risk | Probability | Impact | Mitigation | Trigger | Fallback |
 |---|---|---|---|---|---|
-| Hound misbehaves on Windows (owner's platform) | **Likely** (known test failures, unverified capture) | High | 14.1 CI matrix; owner run | CI red / owner report | Run in WSL2 or a Linux VM with bridged networking |
+| Hound misbehaves on Windows (owner's platform) | Unlikely for tests/demo (all green on owner's laptop); live capture still unverified | High | 14.1 CI matrix; owner run | CI red / owner report | Run in WSL2 or a Linux VM with bridged networking |
 | Capture permissions confuse users | Likely | Medium | split mode, clear errors (verified), README per OS | support questions | all-in-one mode with sudo/admin |
 | Scapy behaviour/API changes | Possible | Medium | version range `<3`, defensive DNS section handling, CI | CI failure on upgrade | pin in lock file |
 | Npcap/libpcap missing | Likely on fresh machines | Medium | actionable error; user-space fallback for default filter | "driver unavailable" log | install instructions |
@@ -359,6 +373,8 @@ batch latency, WS per-client drops, `/api/stats` latency.
 | Schema change breaks existing DBs | Certain without 14.2 | High | 14.2 before any schema change | any model/table edit | delete DB (data loss) |
 | False positives erode trust | Likely | High | explainable reasons, Phase 16 tuning, allowlist | owner ignores dashboard | raise thresholds |
 | Encrypted DNS hides domains | Increasing | Medium | documented; SNI (Phase 20) | many `NO_PRIOR_DNS_LOOKUP` | accept limitation |
+| Dev-tool releases break CI (observed: mypy 2.x) | Likely over time | Low | ranges in `requirements-dev.txt`; fix forward | CI red with no code change | lock file (14.3) |
+| Project in a cloud-synced folder (owner's case: OneDrive) | Likely | Medium (privacy, SQLite locks) | README §16/§18 warnings | sync conflicts, "database is locked" | move project or set `HOUND_DATABASE_URL` |
 
 ---
 

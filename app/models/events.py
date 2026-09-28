@@ -47,15 +47,15 @@ class NetworkEvent(BaseModel):
 
     timestamp: datetime
     source_ip: str
-    source_port: int | None = Field(None, ge=0, le=65535)
+    source_port: int | None = Field(default=None, ge=0, le=65535)
     destination_ip: str
-    destination_port: int | None = Field(None, ge=0, le=65535)
+    destination_port: int | None = Field(default=None, ge=0, le=65535)
     protocol: TransportProtocol
     packet_type: PacketType
-    domain: str | None = Field(None, max_length=253)
-    interface: str | None = Field(None, max_length=64)
-    dns_query_type: str | None = Field(None, max_length=16, pattern=r"^[A-Z0-9]+$")
-    dns_rcode: int | None = Field(None, ge=0, le=4095)
+    domain: str | None = Field(default=None, max_length=253)
+    interface: str | None = Field(default=None, max_length=64)
+    dns_query_type: str | None = Field(default=None, max_length=16, pattern=r"^[A-Z0-9]+$")
+    dns_rcode: int | None = Field(default=None, ge=0, le=4095)
     dns_answers: tuple[str, ...] = Field(default=(), max_length=32)
 
     @field_validator("timestamp")

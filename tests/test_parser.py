@@ -10,6 +10,7 @@ from scapy.packet import Packet, Raw
 
 from app.ingestion.parser import PacketParser
 from app.models.events import PacketType, TransportProtocol
+from tests.conftest import eth
 
 
 def wire(packet: Packet, ts: float = 1_760_000_000.0) -> Packet:
@@ -21,7 +22,7 @@ def wire(packet: Packet, ts: float = 1_760_000_000.0) -> Packet:
 
 def dns_query(domain: str = "Example.COM", qtype: str = "A") -> Packet:
     return wire(
-        Ether()
+        eth()
         / IP(src="192.168.1.10", dst="192.168.1.1")
         / UDP(sport=50000, dport=53)
         / DNS(id=7, rd=1, qd=DNSQR(qname=domain, qtype=qtype))
@@ -50,7 +51,7 @@ def test_dns_query_type_names() -> None:
 
 def test_dns_response_with_answers_and_rcode() -> None:
     pkt = wire(
-        Ether()
+        eth()
         / IP(src="192.168.1.1", dst="192.168.1.10")
         / UDP(sport=53, dport=50000)
         / DNS(
@@ -74,7 +75,7 @@ def test_dns_response_with_answers_and_rcode() -> None:
 
 def test_nxdomain_response() -> None:
     pkt = wire(
-        Ether()
+        eth()
         / IP(src="192.168.1.1", dst="192.168.1.10")
         / UDP(sport=53, dport=50000)
         / DNS(id=7, qr=1, rcode=3, qd=DNSQR(qname="nope.example"))
@@ -84,7 +85,7 @@ def test_nxdomain_response() -> None:
 
 
 def test_tcp_syn_is_connection_attempt() -> None:
-    pkt = wire(Ether() / IP(src="192.168.1.10", dst="93.184.216.34") / TCP(sport=40000, dport=443, flags="S"))
+    pkt = wire(eth() / IP(src="192.168.1.10", dst="93.184.216.34") / TCP(sport=40000, dport=443, flags="S"))
     event = PacketParser().parse(pkt)
     assert event is not None
     assert event.packet_type is PacketType.TCP_SYN
@@ -95,8 +96,8 @@ def test_tcp_syn_is_connection_attempt() -> None:
 
 def test_syn_ack_and_established_segments_are_ignored() -> None:
     parser = PacketParser()
-    syn_ack = wire(Ether() / IP(src="93.184.216.34", dst="192.168.1.10") / TCP(sport=443, dport=40000, flags="SA"))
-    ack = wire(Ether() / IP(src="192.168.1.10", dst="93.184.216.34") / TCP(sport=40000, dport=443, flags="A"))
+    syn_ack = wire(eth() / IP(src="93.184.216.34", dst="192.168.1.10") / TCP(sport=443, dport=40000, flags="SA"))
+    ack = wire(eth() / IP(src="192.168.1.10", dst="93.184.216.34") / TCP(sport=40000, dport=443, flags="A"))
     assert parser.parse(syn_ack) is None
     assert parser.parse(ack) is None
     assert parser.stats.ignored == 2
@@ -104,7 +105,7 @@ def test_syn_ack_and_established_segments_are_ignored() -> None:
 
 def test_dns_over_tcp() -> None:
     pkt = wire(
-        Ether()
+        eth()
         / IP(src="192.168.1.10", dst="192.168.1.1")
         / TCP(sport=40001, dport=53, flags="PA")
         / DNS(id=1, qd=DNSQR(qname="tcp.example.com"))
@@ -116,7 +117,7 @@ def test_dns_over_tcp() -> None:
 
 def test_ipv6_dns_query() -> None:
     pkt = wire(
-        Ether()
+        eth()
         / IPv6(src="fe80::1", dst="2001:4860:4860::8888")
         / UDP(sport=5000, dport=53)
         / DNS(qd=DNSQR(qname="ipv6.example.com", qtype="AAAA"))
@@ -128,14 +129,14 @@ def test_ipv6_dns_query() -> None:
 
 def test_non_ip_and_irrelevant_packets_ignored() -> None:
     parser = PacketParser()
-    assert parser.parse(wire(Ether() / ARP())) is None
-    assert parser.parse(wire(Ether() / IP(src="1.1.1.1", dst="2.2.2.2") / ICMP())) is None
-    assert parser.parse(wire(Ether() / IP(src="1.1.1.1", dst="2.2.2.2") / UDP(sport=1, dport=123))) is None
+    assert parser.parse(wire(eth() / ARP(hwsrc="02:00:00:00:00:10", psrc="192.168.1.10", pdst="192.168.1.1"))) is None
+    assert parser.parse(wire(eth() / IP(src="1.1.1.1", dst="2.2.2.2") / ICMP())) is None
+    assert parser.parse(wire(eth() / IP(src="1.1.1.1", dst="2.2.2.2") / UDP(sport=1, dport=123))) is None
 
 
 def test_malformed_dns_payload_is_counted_not_raised() -> None:
     parser = PacketParser()
-    garbage = wire(Ether() / IP(src="192.168.1.10", dst="8.8.8.8") / UDP(sport=5555, dport=53) / Raw(b"\x00\x01\xff"))
+    garbage = wire(eth() / IP(src="192.168.1.10", dst="8.8.8.8") / UDP(sport=5555, dport=53) / Raw(b"\x00\x01\xff"))
     assert parser.parse(garbage) is None
     assert parser.stats.malformed == 1
 
@@ -149,11 +150,11 @@ def test_truncated_dns_does_not_raise() -> None:
 
 
 def test_missing_or_invalid_dns_name() -> None:
-    no_question = wire(Ether() / IP(src="192.168.1.10", dst="192.168.1.1") / UDP(sport=5, dport=53) / DNS(id=1, qd=[]))
+    no_question = wire(eth() / IP(src="192.168.1.10", dst="192.168.1.1") / UDP(sport=5, dport=53) / DNS(id=1, qd=[]))
     event = PacketParser().parse(no_question)
     assert event is not None and event.domain is None
     bad_name = wire(
-        Ether()
+        eth()
         / IP(src="192.168.1.10", dst="192.168.1.1")
         / UDP(sport=5, dport=53)
         / DNS(id=1, qd=DNSQR(qname=b"bad name\xff.example"))

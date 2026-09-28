@@ -338,7 +338,7 @@ class DashboardPage:
         except ApiError as exc:
             ui.notify(f"Could not load device: {exc}", type="negative")
             return
-        level = device.get("risk_level", "safe")
+        level = str(device.get("risk_level") or "safe")
         self.detail_dialog.clear()
         with self.detail_dialog, ui.card().classes("w-full").style("max-width: 1100px"):
             with ui.row().classes("w-full items-center justify-between"):

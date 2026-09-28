@@ -32,11 +32,11 @@ class EventOut(BaseModel):
     destination_port: int | None
     protocol: TransportProtocol
     packet_type: PacketType
-    domain: str | None = Field(None, description="Queried domain, or domain inferred from DNS answers.")
+    domain: str | None = Field(default=None, description="Queried domain, or domain inferred from DNS answers.")
     domain_source: DomainSource | None
     interface: str | None
     dns_query_type: str | None
-    country: str | None = Field(None, description="Destination country code (simulated by default).")
+    country: str | None = Field(default=None, description="Destination country code (simulated by default).")
     country_name: str | None
     risk_score: int = Field(..., ge=0, le=100)
     risk_level: RiskLevel
@@ -99,12 +99,12 @@ class PipelineStatus(BaseModel):
     """Live state of the ingestion → processing pipeline."""
 
     mode: RunModeName
-    source: str | None = Field(None, description="Active in-process event source, if any.")
+    source: str | None = Field(default=None, description="Active in-process event source, if any.")
     source_state: SourceState
     source_error: str | None = None
     interface: str | None = None
-    packets_parsed: int = Field(0, description="Packets turned into events by the in-process source.")
-    packets_malformed: int = Field(0, description="Malformed packets skipped by the in-process source.")
+    packets_parsed: int = Field(default=0, description="Packets turned into events by the in-process source.")
+    packets_malformed: int = Field(default=0, description="Malformed packets skipped by the in-process source.")
     queue_size: int
     queue_capacity: int
     events_received: int

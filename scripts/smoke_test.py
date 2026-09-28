@@ -68,7 +68,7 @@ def check(label: str, condition: bool) -> None:
 def main() -> int:
     port = free_port()
     base = f"http://127.0.0.1:{port}"
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         env = os.environ | {
             "HOUND_DATABASE_URL": f"sqlite:///{Path(tmp) / 'smoke.db'}",
             "HOUND_INGEST_TOKEN_PATH": str(Path(tmp) / "token"),

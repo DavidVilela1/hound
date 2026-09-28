@@ -73,8 +73,15 @@ def normalize_argv(argv: Sequence[str]) -> list[str]:
 
 
 def _is_privileged() -> bool:
-    geteuid = getattr(os, "geteuid", None)
-    return bool(geteuid and geteuid() == 0)
+    """``True`` when running as root (POSIX) or as an elevated Administrator (Windows)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except (AttributeError, OSError):
+            return False
+    return os.geteuid() == 0
 
 
 def cmd_serve(args: argparse.Namespace, settings: Settings) -> int:

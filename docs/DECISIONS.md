@@ -25,6 +25,7 @@ change their status or add a "Revisited" note.
 | 014 | Loopback de-duplication and self-traffic filtering in capture | Accepted |
 | 015 | Schema via `create_all`, no migrations yet | Accepted (debt) |
 | 016 | Stdlib-only HTTP forwarding in the privileged daemon | Accepted |
+| 017 | CI on GitHub Actions; dev tools in `requirements-dev.txt`, config in `pyproject.toml` | Accepted |
 
 ---
 
@@ -167,3 +168,21 @@ change their status or add a "Revisited" note.
   injectable transport for tests.
 * **Reason:** keep the privileged process's code surface minimal.
 * **Consequences:** one TCP connection per batch (no keep-alive); fine at batch cadence.
+
+## ADR-017 — CI on GitHub Actions; dev tooling declared in the repo
+* **Context:** the owner develops on Windows, but everything had only ever run on Linux.
+  Lint/type/audit tools (ruff, mypy, pip-audit) were used during development but not
+  declared anywhere, and their settings lived in command-line flags.
+* **Options:** no CI (manual runs per OS); GitHub Actions; other CI services; tox/nox.
+* **Chosen:** `.github/workflows/ci.yml` — matrix Linux/Windows/macOS × Python 3.11/3.13
+  running compileall, ruff, mypy, pytest and the demo smoke test, plus a `pip-audit` job.
+  Tools are declared in `requirements-dev.txt` (includes `requirements.txt`); their
+  settings live in `pyproject.toml` (`[tool.ruff.lint]`, `[tool.mypy]`) so a bare
+  `ruff check` / `mypy` locally equals CI. No tox/nox: one requirements file and plain
+  commands are enough for a single developer.
+* **Reason:** the only practical way to execute the suite on Windows and macOS; free for
+  public repos; no new runtime dependency.
+* **Consequences:** tool ranges (`mypy<3`, `ruff<1`) can pull stricter releases — already
+  observed when mypy 2.x flagged 5 issues that 1.x accepted. Mitigation: fix forward;
+  the lock file (14.3) will make CI reproducible. Requires the project to be hosted on
+  GitHub; until then the workflow is inert.

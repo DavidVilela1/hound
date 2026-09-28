@@ -67,10 +67,10 @@ def test_threshold_order_enforced() -> None:
 
 def test_relative_paths_resolve_against_project_root(tmp_path: Path) -> None:
     s = make(database_url="sqlite:///data/x.db")
-    assert s.resolved_database_url == f"sqlite:///{(PROJECT_ROOT / 'data' / 'x.db').resolve()}"
+    assert s.resolved_database_url == f"sqlite:///{(PROJECT_ROOT / 'data' / 'x.db').resolve().as_posix()}"
     assert s.resolve_path(Path("config/blocklist.txt")) == (PROJECT_ROOT / "config" / "blocklist.txt").resolve()
     absolute = tmp_path / "a.db"
-    assert make(database_url=f"sqlite:///{absolute}").resolved_database_url == f"sqlite:///{absolute}"
+    assert make(database_url=f"sqlite:///{absolute}").resolved_database_url == f"sqlite:///{absolute.as_posix()}"
     assert make(database_url="sqlite:///:memory:").resolved_database_url == "sqlite:///:memory:"
 
 

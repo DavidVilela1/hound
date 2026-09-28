@@ -47,57 +47,59 @@ class Settings(BaseSettings):
     )
 
     # --- Server -----------------------------------------------------------
-    host: str = Field("127.0.0.1", description="Interface the API/dashboard binds to.")
-    port: int = Field(8000, ge=1, le=65535)
+    host: str = Field(default="127.0.0.1", description="Interface the API/dashboard binds to.")
+    port: int = Field(default=8000, ge=1, le=65535)
     allowed_hosts: str = Field(
-        "127.0.0.1,localhost,::1",
+        default="127.0.0.1,localhost,::1",
         description="Comma-separated Host header allow-list (DNS-rebinding protection).",
     )
-    api_url: str | None = Field(None, description="Base URL of the Hound API used by the dashboard and capture daemon.")
+    api_url: str | None = Field(
+        default=None, description="Base URL of the Hound API used by the dashboard and capture daemon."
+    )
     enable_dashboard: bool = True
 
     # --- Storage ----------------------------------------------------------
     database_url: str = "sqlite:///data/hound.db"
-    retention_max_events: int = Field(250_000, ge=1_000, le=50_000_000)
+    retention_max_events: int = Field(default=250_000, ge=1_000, le=50_000_000)
 
     # --- Capture ----------------------------------------------------------
     network_interface: str | None = None
-    bpf_filter: str = Field(DEFAULT_BPF_FILTER, min_length=1, max_length=1024)
+    bpf_filter: str = Field(default=DEFAULT_BPF_FILTER, min_length=1, max_length=1024)
     ingest_token: SecretStr | None = None
     ingest_token_path: Path = Path("data/.ingest_token")
 
     # --- Pipeline ---------------------------------------------------------
-    queue_max_size: int = Field(10_000, ge=100, le=1_000_000)
-    batch_size: int = Field(200, ge=1, le=5_000)
-    flush_interval_seconds: float = Field(0.5, gt=0, le=10)
-    ws_client_queue_size: int = Field(500, ge=10, le=10_000)
-    max_page_size: int = Field(500, ge=10, le=HARD_MAX_PAGE_SIZE)
+    queue_max_size: int = Field(default=10_000, ge=100, le=1_000_000)
+    batch_size: int = Field(default=200, ge=1, le=5_000)
+    flush_interval_seconds: float = Field(default=0.5, gt=0, le=10)
+    ws_client_queue_size: int = Field(default=500, ge=10, le=10_000)
+    max_page_size: int = Field(default=500, ge=10, le=HARD_MAX_PAGE_SIZE)
 
     # --- Enrichment -------------------------------------------------------
     blocklist_path: Path = Path("config/blocklist.txt")
     geo_mode: Literal["simulated", "mapping_only"] = "simulated"
     geo_ranges_path: Path = Path("config/geo_ranges.csv")
-    dns_cache_size: int = Field(10_000, ge=100, le=1_000_000)
-    dns_cache_ttl_seconds: int = Field(3_600, ge=10, le=86_400)
+    dns_cache_size: int = Field(default=10_000, ge=100, le=1_000_000)
+    dns_cache_ttl_seconds: int = Field(default=3_600, ge=10, le=86_400)
 
     # --- Risk engine ------------------------------------------------------
-    risk_suspicious_threshold: int = Field(25, ge=1, le=100)
-    risk_dangerous_threshold: int = Field(70, ge=1, le=100)
-    risk_window_seconds: int = Field(60, ge=5, le=3_600)
-    risk_repeated_attempts_threshold: int = Field(15, ge=2, le=10_000)
-    risk_port_scan_threshold: int = Field(15, ge=2, le=10_000)
-    risk_host_sweep_threshold: int = Field(20, ge=2, le=10_000)
-    risk_nxdomain_threshold: int = Field(10, ge=2, le=10_000)
+    risk_suspicious_threshold: int = Field(default=25, ge=1, le=100)
+    risk_dangerous_threshold: int = Field(default=70, ge=1, le=100)
+    risk_window_seconds: int = Field(default=60, ge=5, le=3_600)
+    risk_repeated_attempts_threshold: int = Field(default=15, ge=2, le=10_000)
+    risk_port_scan_threshold: int = Field(default=15, ge=2, le=10_000)
+    risk_host_sweep_threshold: int = Field(default=20, ge=2, le=10_000)
+    risk_nxdomain_threshold: int = Field(default=10, ge=2, le=10_000)
     risk_suspicious_ports: str = "23,135,139,445,1433,3389,4444,5900,6667"
     risk_common_ports: str = "53,80,123,443,853,993,995,465,587,5222,5223,8080,8443"
     risk_risky_tlds: str = "zip,mov,xyz,top,tk,gq,ml,cf,click,country,work"
     trusted_dns_servers: str = Field(
-        "", description="Comma-separated resolver IPs; empty disables the untrusted-resolver signal."
+        default="", description="Comma-separated resolver IPs; empty disables the untrusted-resolver signal."
     )
-    device_risk_window_minutes: int = Field(60, ge=1, le=10_080)
+    device_risk_window_minutes: int = Field(default=60, ge=1, le=10_080)
 
     # --- Demo -------------------------------------------------------------
-    demo_events_per_second: float = Field(4.0, gt=0, le=500)
+    demo_events_per_second: float = Field(default=4.0, gt=0, le=500)
     demo_seed: int | None = None
 
     # --- Logging ----------------------------------------------------------

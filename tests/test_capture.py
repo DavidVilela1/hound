@@ -14,6 +14,7 @@ from scapy.layers.l2 import Ether
 from app.ingestion import capture as capture_mod
 from app.ingestion.capture import CaptureError, InterfaceInfo, PacketCaptureService, describe_capture_error
 from app.models.events import NetworkEvent
+from tests.conftest import eth
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +74,7 @@ def test_capture_start_feed_and_stop(fake_sniffer: type[FakeSniffer]) -> None:
     assert sniffer.kwargs["filter"] == "udp port 53" and sniffer.kwargs["store"] is False
     packet = Ether(
         bytes(
-            Ether()
+            eth()
             / IP(src="192.168.1.10", dst="192.168.1.1")
             / UDP(sport=1, dport=53)
             / DNS(qd=DNSQR(qname="a.example"))
@@ -171,3 +172,17 @@ def test_loopback_duplicates_are_dropped() -> None:
     assert is_loopback_interface("lo") and is_loopback_interface("lo0")
     assert is_loopback_interface("Npcap Loopback Adapter")
     assert not is_loopback_interface("eth0") and not is_loopback_interface(None)
+
+
+def test_windows_network_name_is_accepted(monkeypatch: pytest.MonkeyPatch, fake_sniffer: type[FakeSniffer]) -> None:
+    npf = r"\Device\NPF_{3F2504E0-4F89-11D3-9A0C-0305E82C3301}"
+    monkeypatch.setattr(
+        capture_mod,
+        "list_interfaces",
+        lambda: [InterfaceInfo("Wi-Fi", "Intel(R) Wi-Fi 6 AX201 160MHz", "192.168.1.20", None, npf)],
+    )
+    for alias in ("Wi-Fi", "Intel(R) Wi-Fi 6 AX201 160MHz", npf):
+        service = PacketCaptureService(alias, "udp port 53", lambda e: True)
+        service.start()
+        assert service.status().interface == "Wi-Fi"  # always resolved to Scapy's name
+        service.stop()

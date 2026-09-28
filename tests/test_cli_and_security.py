@@ -66,3 +66,12 @@ def test_tokens_match() -> None:
     assert not tokens_match("abc", "abd")
     assert not tokens_match(None, "abc")
     assert not tokens_match("abc", None)
+
+
+def test_privilege_detection_matches_platform() -> None:
+    from app.cli import _is_privileged
+
+    result = _is_privileged()
+    assert isinstance(result, bool)
+    if sys.platform != "win32":
+        assert result == (os.geteuid() == 0)

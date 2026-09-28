@@ -241,8 +241,10 @@ marked. Pick the one that carries your LAN traffic:
 | macOS | `en0` (Wi-Fi/Ethernet), `en1` | `ifconfig`, `networksetup -listallhardwareports` |
 | Windows | `Ethernet`, `Wi-Fi` (Npcap names) | `Get-NetAdapter` |
 
-On Windows you can pass either the friendly name shown in the DESCRIPTION
-column or the `\Device\NPF_{…}` name.
+On Windows, use the value in the **NAME** column: it is the adapter's friendly
+name, the same as the *Name* shown by `Get-NetAdapter` (for example `Wi-Fi`).
+The DESCRIPTION column (the adapter model) and the Npcap device name
+`\Device\NPF_{…}` are accepted too.
 
 **What you will see.** On a switched or Wi-Fi network a normal computer only
 sees its *own* traffic (plus broadcast/multicast). To monitor every device, run
@@ -372,6 +374,13 @@ split mode works for you.**
   access to Administrators only”*; if selected, the daemon must run from an
   elevated shell. Otherwise a normal shell can capture.
 * The server (`python run.py`) never needs Administrator rights.
+* **Ingest token on Windows.** NTFS ignores the POSIX `0600` mode the server
+  requests for `data\.ingest_token`; the file is protected by the folder's
+  permissions instead. Inside your user profile (Documents, Desktop, OneDrive)
+  only you, Administrators and SYSTEM can read it by default, which is what the
+  elevated daemon needs. If the project lives in a shared folder such as
+  `C:\hound`, set the same `HOUND_INGEST_TOKEN` in both shells instead of
+  relying on the file.
 
 ## 13. API documentation
 
@@ -437,6 +446,20 @@ pytest                         # unit, database and API tests
 python scripts/smoke_test.py   # end-to-end: starts demo mode and checks every layer
 ```
 
+Development tools (lint, type check, dependency audit) are in
+`requirements-dev.txt`:
+
+```bash
+pip install -r requirements-dev.txt
+ruff check app tests scripts run.py
+mypy
+pip-audit -r requirements.txt
+```
+
+`.github/workflows/ci.yml` runs all of these, plus the smoke test, on Linux,
+Windows and macOS with Python 3.11 and 3.13 for every push and pull request
+once the project is on GitHub.
+
 The suite (200+ tests) needs no root privileges and no real network traffic;
 packets are synthesised with Scapy and Scapy's sniffer is replaced by a fake
 where capture behaviour is tested. It covers DNS extraction, packet
@@ -463,6 +486,7 @@ client. `scripts/smoke_test.py` uses a temporary database and a free port.
 | Dashboard says *reconnecting* | The page polls every 5 s meanwhile; check the server log. Behind a proxy set `HOUND_API_URL`. |
 | `400 Invalid host header` | You bound to a LAN address: add it to `HOUND_ALLOWED_HOSTS`. |
 | `attempt to write a readonly database` after using sudo | Files in `data/` were created by root in all-in-one mode: `sudo chown -R "$USER" data/`. |
+| `database is locked` / sync conflicts in a OneDrive or Dropbox folder | Cloud sync is holding the SQLite files. Move the project, or set `HOUND_DATABASE_URL=sqlite:///C:/hound-data/hound.db` (any unsynced folder). |
 | Port 8000 in use | `python run.py --port 8080` (and `--api-url http://127.0.0.1:8080` for the daemon). |
 | Many events dropped under load | Raise `HOUND_QUEUE_MAX_SIZE` or narrow the BPF filter. |
 
@@ -472,6 +496,7 @@ Set `HOUND_LOG_LEVEL=DEBUG` for per-event diagnostics (this logs domain names).
 
 ```text
 hound/
+├── .github/workflows/ci.yml   # CI: lint, types, tests, smoke test on Linux/Windows/macOS
 ├── app/
 │   ├── __init__.py            # version
 │   ├── __main__.py            # python -m app
@@ -538,8 +563,9 @@ hound/
 ├── tests/                     # pytest suite
 ├── .env.example
 ├── .gitignore
-├── pyproject.toml             # pytest config, optional `hound` command
+├── pyproject.toml             # pytest/ruff/mypy config, optional `hound` command
 ├── requirements.txt
+├── requirements-dev.txt       # ruff, mypy, pip-audit (development only)
 ├── README.md
 └── run.py
 ```
@@ -573,6 +599,10 @@ hound/
   capture failures are reported in the UI.
 * **Privacy.** Per-event details (domains) are logged only at DEBUG level.
   The database contains browsing metadata — protect `data/` accordingly.
+  If the project sits in a cloud-synced folder (OneDrive, Dropbox, iCloud
+  Drive), `data/` — the database and the ingest token — is uploaded too. Keep
+  the project outside synced folders, or point `HOUND_DATABASE_URL` and
+  `HOUND_INGEST_TOKEN_PATH` at a local folder that is not synced.
 * **No secrets in the repository.** `.env` is git-ignored; the ingest token is
   generated locally.
 * Security response headers (`X-Content-Type-Options`, `X-Frame-Options`,

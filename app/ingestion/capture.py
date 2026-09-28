@@ -39,10 +39,19 @@ class CaptureError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class InterfaceInfo:
+    """One capture interface.
+
+    ``name`` is what ``--interface`` expects: the kernel name on Linux/macOS
+    (``eth0``, ``en0``) and the friendly name on Windows (``Wi-Fi``).
+    ``network_name`` is the OS-level device name, which differs only on Windows
+    (``\\Device\\NPF_{GUID}``).
+    """
+
     name: str
     description: str
     ipv4: str | None
     mac: str | None
+    network_name: str | None = None
 
 
 def list_interfaces() -> list[InterfaceInfo]:
@@ -55,6 +64,7 @@ def list_interfaces() -> list[InterfaceInfo]:
                 description=str(getattr(iface, "description", "") or ""),
                 ipv4=str(iface.ip) if getattr(iface, "ip", None) else None,
                 mac=str(iface.mac) if getattr(iface, "mac", None) else None,
+                network_name=str(iface.network_name) if getattr(iface, "network_name", None) else None,
             )
         )
     return sorted(result, key=lambda i: i.name)
@@ -66,14 +76,18 @@ def default_interface() -> str | None:
 
 
 def resolve_interface(name: str | None) -> str:
-    """Validate an interface name (or pick Scapy's default). Raises :class:`CaptureError`."""
+    """Validate an interface (or pick Scapy's default) and return its canonical name.
+
+    Accepts the interface name, its description or its OS network name.
+    Raises :class:`CaptureError` if nothing matches.
+    """
     if not name:
         default = default_interface()
         if not default:
             raise CaptureError("No network interface specified and no default interface found.")
         return default
     for info in list_interfaces():
-        if name in (info.name, info.description):
+        if name in (info.name, info.description, info.network_name):
             return info.name
     raise CaptureError(
         f"Network interface {name!r} not found. Run 'python run.py interfaces' to list available interfaces."
@@ -111,7 +125,7 @@ def _userspace_default_filter(packet: Packet) -> bool:
         return False
     if 53 in (transport.sport, transport.dport):
         return True
-    return packet.haslayer("TCP") and bool(int(packet["TCP"].flags) & TCP_FLAG_SYN)
+    return bool(packet.haslayer("TCP")) and bool(int(packet["TCP"].flags) & TCP_FLAG_SYN)
 
 
 class LoopbackDeduplicator:

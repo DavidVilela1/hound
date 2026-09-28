@@ -1,7 +1,7 @@
 # Hound — Architecture & Infrastructure
 
 > Status of this document: describes the **current** architecture (verified against the
-> code on 2026-09-28) and the **target** architecture it should grow into. Where the two
+> code on 2026-09-28, updated after task 14.1) and the **target** architecture it should grow into. Where the two
 > differ, the gap is called out and tracked in [`ROADMAP.md`](ROADMAP.md).
 > Decisions referenced as `ADR-NNN` live in [`DECISIONS.md`](DECISIONS.md).
 
@@ -203,7 +203,7 @@ Verified on 2026-09-28: every module imports standalone (no circular imports), a
 ### 5.1 Runtime
 | Topic | Current | Target |
 |---|---|---|
-| Python | 3.11+ (developed/tested on 3.11.15) | CI on 3.11 and 3.13 |
+| Python | 3.11+; suite executed on 3.11.15 and 3.13.7 (Linux); CI workflow covers 3.11/3.13 on Linux, Windows, macOS (ADR-017) | CI green on every push |
 | Environment | `venv` + `requirements.txt` (ranges) | plus a **lock file** (`requirements.lock`, generated) for reproducible installs |
 | Entry points | `python run.py`, `python -m app`, `hound` (editable install) | unchanged |
 | Process model | 1 server process; optional 1 capture daemon | unchanged; optional OS service units (Phase 21) |
@@ -221,10 +221,10 @@ Verified on 2026-09-28: every module imports standalone (no circular imports), a
 ### 5.3 Networking & capture
 | Topic | Current | Target |
 |---|---|---|
-| Interface discovery | `python run.py interfaces`; name or description accepted | also accept Windows `\Device\NPF_{…}` network names |
+| Interface discovery | `python run.py interfaces`; name, description or Windows `\Device\NPF_{…}` network name accepted | unchanged |
 | BPF | default: DNS (UDP/TCP 53) + IPv4 SYN | optional IPv6 SYN clause documented; consider making it default after testing |
 | Permissions | split mode; setcap/ChmodBPF/Npcap documented | unchanged |
-| Platforms | live capture verified on **Linux only** | verified on Windows (primary user platform) and macOS |
+| Platforms | live capture verified on **Linux only**; Windows admin detection implemented but not yet executed on Windows | verified on Windows (primary user platform) and macOS |
 | IPv6 | parsed everywhere; SYN filter IPv4-only | full IPv6 SYN coverage |
 
 ### 5.4 Application
