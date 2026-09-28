@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (Phase 15 done; next: 16a allowlist).
+> Last reviewed: 2026-09-28 (16a done; next: 16b risk settings file).
 
 ---
 
@@ -290,8 +290,8 @@ M6 stays open until its exit criteria are met.*
 * **Risk:** metric creep — keep to counters that drive a decision.
 
 ### Phase 16 — Field trial & detection tuning → M7
-* **Slices:** **16a allowlist ← next task** (no owner hardware needed) · 16b risk
-  settings from an optional TOML file · 16c blocklist reload without restart · 16d field
+* **Slices:** 16a allowlist — **DONE** (ADR-021) · **16b risk ← next task**
+  settings from an optional TOML file · 16c blocklist/allowlist reload without restart · 16d field
   trial + tuning (needs the owner's monitoring position).
 * **Tasks:** run on the owner's network ≥ 7 days (split mode); review every
   suspicious/dangerous event; add an **allowlist** (domains/devices never flagged);

@@ -215,7 +215,7 @@ silently change the bind address):
 
 Other useful settings (full list with comments in `.env.example`):
 `HOUND_ALLOWED_HOSTS`, `HOUND_API_URL`, `HOUND_INGEST_TOKEN`,
-`HOUND_GEO_MODE` (`simulated` | `mapping_only`), `HOUND_GEO_RANGES_PATH`,
+`HOUND_ALLOWLIST_PATH`, `HOUND_GEO_MODE` (`simulated` | `mapping_only`), `HOUND_GEO_RANGES_PATH`,
 `HOUND_TRUSTED_DNS_SERVERS`, `HOUND_RETENTION_MAX_EVENTS`,
 `HOUND_QUEUE_MAX_SIZE`, `HOUND_LOG_FORMAT` (`text` | `json`) and all
 `HOUND_RISK_*` thresholds. Relative paths are resolved against the project
@@ -237,6 +237,23 @@ boundaries: the entry `example.com` matches `example.com`, `www.example.com`,
 `EXAMPLE.COM.` and `a.b.example.com`, but **not** `notexample.com` or
 `example.com.evil.net`. `www.` is not stripped, so an entry `www.example.com`
 does not block `example.com`.
+
+**Allowlist** (`config/allowlist.txt`, optional): things you have checked and
+trust, so their indicators stop being counted — for example a CDN whose
+random-looking host names trip the entropy signal, or your NAS that legitimately
+connects to many devices. One entry per line: a **domain** (matched like the
+blocklist, including subdomains) or a **device** (an IP address or a CIDR range
+such as `192.168.1.64/28`). Restart Hound after editing.
+
+* An allowlisted **domain** has none of its indicators counted, including a
+  blocklist match on that exact name.
+* An allowlisted **device** has its behaviour ignored (scans, repeated attempts,
+  unusual ports…), but a **blocklist hit still counts** — trusting a device must
+  not hide it contacting a known-bad domain.
+* Nothing is hidden: affected events keep a 0-point `ALLOWLISTED` reason naming
+  the entry and the indicators it covered, visible in the dashboard and API.
+* Single words such as `com` are rejected; ranges wider than /24 (IPv4) or /64
+  (IPv6) are accepted but logged as a warning.
 
 **Database and upgrades.** The SQLite database (`data/hound.db` by default) is created
 automatically and carries a schema version. When a newer Hound needs a different schema,
@@ -643,6 +660,7 @@ hound/
 │       └── mappers.py         # ORM → schema
 ├── config/
 │   ├── blocklist.txt          # sample blocklist (reserved TLDs only)
+│   ├── allowlist.txt          # your trusted domains/devices (empty by default)
 │   └── geo_ranges.csv         # illustrative CIDR → country table
 ├── data/                      # SQLite DB and ingest token (created at runtime)
 ├── docs/                      # status, roadmap, architecture, decision records
@@ -712,7 +730,8 @@ hound/
   Do not treat country data as authoritative.
 * **Risk scores are heuristics.** They surface indicators associated with
   elevated risk; false positives (e.g. CDN hostnames with random-looking labels)
-  and false negatives are expected. They are not malware detection.
+  and false negatives are expected — use the allowlist (§8) for ones you have
+  checked. They are not malware detection.
 * **Visibility** is limited to traffic that reaches the capture interface (see §9).
 * **Encrypted DNS** (DoH/DoT/DoQ) hides domain names; only the connection to the
   resolver is visible.

@@ -108,12 +108,14 @@ tested · extension points. File references are to the current code.
   earlier DNS answers, public/local destination flag.
 * **In → out:** `NetworkEvent` → `Enrichment` (pure, no network I/O).
 * **Depends on:** `Blocklist` (`DomainReputation` protocol), `GeoLocator` protocol,
-  `ResolutionCache` (bounded LRU + TTL).
-* **Failure modes:** missing/empty blocklist (warning, reputation disabled); broken
-  geolocator (caught, country `None`).
-* **Tests:** `tests/test_enrichment.py`.
+  `ResolutionCache` (bounded LRU + TTL), `Allowlist` (`app/enrichment/allowlist.py`:
+  domains via the blocklist's suffix matching, devices as IP networks).
+* **Failure modes:** missing/empty blocklist (warning, reputation disabled); missing
+  allowlist (info, nothing allowlisted); invalid allowlist lines (warning, skipped);
+  broken geolocator (caught, country `None`).
+* **Tests:** `tests/test_enrichment.py`, `tests/test_allowlist.py`.
 * **Extension points:** real GeoIP (`GeoLocator`), multiple reputation feeds (compose
-  `DomainReputation`s), allowlist.
+  `DomainReputation`s).
 
 ### 3.6 Risk engine — `app/risk/`
 * **Responsibility:** deterministic, explainable scoring (ADR-009).
@@ -122,9 +124,13 @@ tested · extension points. File references are to the current code.
   event-time sliding windows).
 * **Failure modes:** state lost on restart (by design, windows are ≤ minutes); memory
   bounded by device/entry caps.
-* **Tests:** `tests/test_risk.py` (every signal, thresholds, cap, determinism, bounds).
+* **Allowlist policy** (`apply_allowlist`, ADR-021): after the signals run, indicators
+  covered by an allowlisted domain (all) or device (all except `BLOCKLISTED_DOMAIN`) are
+  removed from the score and listed in one 0-point `ALLOWLISTED` reason.
+* **Tests:** `tests/test_risk.py` (every signal, thresholds, cap, determinism, bounds),
+  `tests/test_allowlist.py` (policy).
 * **Extension points:** add a class implementing `RiskSignal`; weights/thresholds are
-  data (`RiskWeights`, `RiskConfig`). Target: rules loaded from a TOML file (Phase 16).
+  data (`RiskWeights`, `RiskConfig`). Target: rules loaded from a TOML file (16b).
 
 ### 3.7 Persistence — `app/database/`, `app/services/store.py`
 * **Responsibility:** atomically store events and update device aggregates; retention.

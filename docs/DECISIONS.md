@@ -29,6 +29,7 @@ change their status or add a "Revisited" note.
 | 018 | Versioned SQLite schema: frozen baseline + ordered atomic migrations | Accepted |
 | 019 | Hash-checked, universal lock files generated with uv; CI installs the lock | Accepted |
 | 020 | Pipeline metrics as in-process JSON; the daemon reports its counters inside ingest batches | Accepted |
+| 021 | Allowlist: suppressed indicators stay visible; device entries never hide blocklist hits | Accepted |
 
 ---
 
@@ -271,3 +272,26 @@ change their status or add a "Revisited" note.
   (`received_at` shows staleness); one report slot, so several daemons at once would
   overwrite each other (single-daemon design, ADR-002). An older server rejects the new
   field, so daemon and server must be the same version (they run from one checkout).
+
+## ADR-021 — Allowlist semantics: visible suppression; devices never hide blocklist hits
+* **Context:** the field trial will produce known false positives (CDN hostnames tripping
+  the entropy signal, the owner's own devices that scan or connect a lot). The owner
+  needs a way to say "I checked this" without weakening detection elsewhere.
+* **Options:** (a) drop allowlisted events entirely; (b) keep them but cap the level at
+  SAFE while keeping the score; (c) remove covered indicators from the score and record
+  them in one 0-point reason; for devices: (i) cover everything, or (ii) cover
+  behaviour only.
+* **Chosen:** (c) + (ii). A domain entry covers every indicator of the event (an explicit
+  decision about that name, overriding a blocklist entry above it). A device entry
+  covers behavioural indicators only — `BLOCKLISTED_DOMAIN` still counts. The file
+  (`config/allowlist.txt`, optional, `HOUND_ALLOWLIST_PATH`) is loaded at start;
+  single-label entries are rejected, wide ranges logged. Stored as a normal reason in
+  the existing `risk_reasons` JSON — no schema change.
+* **Reason:** (a) would hide activity and break counts; (b) makes score and level
+  disagree and still raises device risk; (c) keeps score, level and device aggregates
+  consistent while every suppressed indicator stays visible. Device-wide trust that also
+  silenced blocklist hits would blind Hound to exactly the case that matters most — a
+  trusted device that gets compromised.
+* **Consequences:** behaviour tracking still records allowlisted traffic (windows are
+  unchanged); reload needs a restart until 16c; destination-based entries (e.g. "any
+  device → my NAS on port 445") are not supported yet.

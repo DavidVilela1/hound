@@ -11,6 +11,10 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **Allowlist** (`config/allowlist.txt`, `HOUND_ALLOWLIST_PATH`): domains and devices
+  (IP or CIDR) whose indicators are not counted. Suppressed indicators stay visible in a
+  0-point `ALLOWLISTED` reason; an allowlisted device's blocklist hits still count
+  (ADR-021).
 - **`scripts/benchmark.py`**: reproducible throughput and latency measurement on a
   temporary database (dissection, parsing, processing at several batch sizes, API
   latency at a chosen database size, storage per event, peak memory), text or JSON.

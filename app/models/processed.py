@@ -17,6 +17,10 @@ class Enrichment:
     domain_source: DomainSource | None
     blocklist_match: str | None
     destination_is_public: bool
+    allowlisted_domain: str | None = None
+    """Allowlist entry covering the event's domain (see :mod:`app.enrichment.allowlist`)."""
+    allowlisted_device: str | None = None
+    """Allowlist entry (address or range) covering the event's source device."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,6 +22,7 @@ from typing import Literal
 from app.core.config import Settings
 from app.core.security import load_or_create_ingest_token
 from app.database.engine import Database
+from app.enrichment.allowlist import Allowlist
 from app.enrichment.blocklist import Blocklist
 from app.enrichment.dns_cache import ResolutionCache
 from app.enrichment.geo import build_geolocator, load_ranges
@@ -86,6 +87,7 @@ class HoundRuntime:
             self.blocklist,
             geolocator,
             ResolutionCache(settings.dns_cache_size, timedelta(seconds=settings.dns_cache_ttl_seconds)),
+            Allowlist.from_file(settings.resolve_path(settings.allowlist_path)),
         )
         self.risk_engine = RiskEngine(RiskConfig.from_settings(settings))
         self.store = SqlEventStore(

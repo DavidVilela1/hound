@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from app.core.netutils import is_public_address
+from app.enrichment.allowlist import Allowlist
 from app.enrichment.blocklist import DomainReputation
 from app.enrichment.dns_cache import ResolutionCache
 from app.enrichment.geo import GeoLocator
@@ -22,10 +23,12 @@ class EnrichmentService:
         reputation: DomainReputation,
         geolocator: GeoLocator,
         resolution_cache: ResolutionCache,
+        allowlist: Allowlist | None = None,
     ) -> None:
         self._reputation = reputation
         self._geo = geolocator
         self._cache = resolution_cache
+        self._allowlist = allowlist or Allowlist()
 
     def observe_dns_response(self, event: NetworkEvent) -> None:
         """Remember ``answer IP → queried domain`` from a DNS response."""
@@ -47,6 +50,8 @@ class EnrichmentService:
             domain_source=source,
             blocklist_match=self._reputation.match(domain) if domain else None,
             destination_is_public=is_public_address(event.destination_ip),
+            allowlisted_domain=self._allowlist.match_domain(domain) if domain else None,
+            allowlisted_device=self._allowlist.match_device(event.source_ip),
         )
 
     def _locate(self, ip: str) -> str | None:

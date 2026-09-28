@@ -5,17 +5,17 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 9: task 15c benchmark script — Phase 15 done)
+Last updated:      2026-09-28 (session 10: task 16a allowlist)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
-Current phase:     Phase 15 done (doctor, metrics, benchmark) → Phase 16 next; Phase 14's
-                   last items (licence, version label) wait on the owner
+Current phase:     Phase 16 — Field trial & detection tuning (16a done); Phase 14's last
+                   items (licence, version label) wait on the owner
 Current task:      none in progress
-Next task:         16a domain/device allowlist (Phase 16, no owner hardware needed)
+Next task:         16b risk weights/thresholds from an optional TOML file
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon, an automatically tested dashboard, reproducible
                    hash-checked installs, a read-only `doctor` setup check and per-stage
-                   loss metrics (`/api/metrics`), a reproducible benchmark (94 % line
-                   coverage). Linux: 312 tests pass
+                   loss metrics (`/api/metrics`), a reproducible benchmark and an
+                   owner allowlist (94 % line coverage). Linux: 334 tests pass
                    (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
                    skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
                    capture works on Windows (split mode, Npcap, "Wi-Fi").
@@ -38,7 +38,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       312 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       334 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -103,6 +103,9 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-28 s10 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 334 / 334 / 334 passed; clean; smoke all passed; coverage 94 % (`risk/engine.py` 100 %, `allowlist.py` 96 %) |
+| 2026-09-28 s10 | Mutation check of `tests/test_allowlist.py` (7 breakages: device entry hides blocklist, policy not applied, silent suppression, bare TLD accepted, domain not matched, file not wired, no broad-range warning) | Py 3.11 | each caught; originals restored |
+| 2026-09-28 s10 | **Demo mode, same seed, without vs. with allowlist `192.168.1.0/24`** (10 s at 40 events/s) | Linux, lock venv 3.13 | without: 28 flagged (26 without a blocklist hit); with: only the 2 blocklist hits flagged (still DANGEROUS), 69 events carry an `ALLOWLISTED` reason; "Allowlist loaded devices=1" logged |
 | 2026-09-28 s9 | `python scripts/benchmark.py` (default 50 k rows / `--rows 250000`) | Linux, 2 vCPU, Py 3.11 | 21 s / 69 s; batch-200 ≈ 5 800–6 100 events/s; `/api/stats` 20 / 81 ms; 516 B/event; peak 163 MiB; both checks OK (details: ROADMAP §I) |
 | 2026-09-28 s9 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy; compileall; smoke; `benchmark.py --quick` | Linux | 312 / 312 / 312 passed; clean; smoke all passed; quick benchmark OK in both lock venvs; no `hound-bench-*` temp folders left |
 | 2026-09-28 s9 | First benchmark draft measured storage before a WAL checkpoint | Py 3.11 | 3 246 B/event (misleading: WAL pages) → checkpoint added before measuring |
@@ -211,16 +214,29 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   Reproduced the ROADMAP §I baseline (table updated). README §15 "Measuring
   performance". **Phase 15 complete.**
 
+- **16a Allowlist (session 10):** `app/enrichment/allowlist.py` (domains via the
+  blocklist's suffix matching; devices as IP/CIDR; bare labels rejected, ranges wider
+  than /24 or /64 logged), `Enrichment.allowlisted_domain/device`, and
+  `apply_allowlist()` in the risk engine (ADR-021): domain entries cover every indicator,
+  device entries all but `BLOCKLISTED_DOMAIN`; covered indicators are removed from the
+  score and listed in a 0-point `ALLOWLISTED` reason (no schema change). Setting
+  `HOUND_ALLOWLIST_PATH` (default `config/allowlist.txt`, shipped with comments only →
+  default behaviour unchanged). Test fixture uses an absent allowlist so the owner's
+  entries never affect tests. `tests/test_allowlist.py` (22). README §8, ARCHITECTURE
+  §3.5/§3.6, `.env.example`, CHANGELOG.
+  *Deviation from the plan:* the plan said "cap the level at SAFE"; covered indicators
+  are removed from the score instead, so score, level and device aggregates cannot
+  disagree (ADR-021).
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **16a Allowlist.** Domains (suffix match, like the blocklist) and devices (IP) that
-   are never flagged: risk still computed and stored, but the level is capped at SAFE
-   with a visible "allowlisted" reason, so nothing is hidden. File-based
-   (`config/allowlist.txt`, optional), loaded at start. Prepares the field trial (known
-   false-positive candidates: CDN hostnames, the owner's own devices). Unblocked.
-2. 16b risk weights/thresholds from an optional TOML file (`tomllib`).
+1. **16b Risk settings file.** Load signal weights and thresholds from an optional TOML
+   file (stdlib `tomllib`, no dependency), validated, with defaults unchanged when absent;
+   today they can only be changed through `HOUND_RISK_*` variables (thresholds) or code
+   (weights). Needed to tune during the field trial without editing code. Unblocked.
+2. 16c blocklist/allowlist reload without restart.
 3. 14.3b LICENSE + version label, once the owner decides.
 4. Owner: run `python scripts/benchmark.py` on the Windows laptop once, to record a
    baseline for the machine that will actually run Hound.
@@ -277,6 +293,8 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 - Encrypted DNS (DoH/DoT/DoQ) hides domain names.
 - Risk levels are heuristics, not malware detection; not yet tuned on real traffic.
 - Devices are identified by IP address.
+- Allowlist changes need a restart (16c); entries match domains or source devices only —
+  "any device → this destination" (e.g. SMB to the owner's NAS) is not expressible yet.
 - Single process, single user, localhost only; no dashboard authentication.
 - Live capture verified on Linux (loopback) and Windows (Wi-Fi, owner's report); macOS not
   yet. On Wi-Fi, only this computer's own traffic is visible (see README §9).

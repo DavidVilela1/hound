@@ -76,6 +76,7 @@ class Settings(BaseSettings):
 
     # --- Enrichment -------------------------------------------------------
     blocklist_path: Path = Path("config/blocklist.txt")
+    allowlist_path: Path = Path("config/allowlist.txt")
     geo_mode: Literal["simulated", "mapping_only"] = "simulated"
     geo_ranges_path: Path = Path("config/geo_ranges.csv")
     dns_cache_size: int = Field(default=10_000, ge=100, le=1_000_000)

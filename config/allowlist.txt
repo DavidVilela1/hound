@@ -1,0 +1,24 @@
+# Hound allowlist
+# ---------------
+# Domains and devices whose risk indicators should not be counted. Use it for things you
+# have checked and trust, e.g. a CDN whose random-looking host names trip the entropy
+# signal, or your own NAS that legitimately connects to many devices.
+# One entry per line. Blank lines and text after '#' are ignored. Restart Hound after
+# editing. Nothing is hidden: affected events keep an "ALLOWLISTED" reason that names the
+# entry and the indicators it covered.
+#
+# Domains - match the name itself and every subdomain (like the blocklist):
+#   cdn.example.com
+#
+# Devices - a source IP address, or a CIDR range of addresses:
+#   192.168.1.20
+#   192.168.1.64/28
+#
+# Rules:
+# * An allowlisted DOMAIN has none of its indicators counted, including a blocklist match
+#   on that exact name: you have vouched for it.
+# * An allowlisted DEVICE has its behaviour ignored (scans, repeated attempts, unusual
+#   ports, ...), but a BLOCKLIST HIT STILL COUNTS: trusting a device must not hide it
+#   contacting a known-bad domain.
+# * Single words such as "com" are rejected. Ranges wider than /24 (IPv4) or /64 (IPv6)
+#   are accepted but logged as a warning.

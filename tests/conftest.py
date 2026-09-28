@@ -66,6 +66,7 @@ def settings(tmp_path: Path, blocklist_file: Path, geo_file: Path) -> Settings:
         _env_file=None,  # type: ignore[call-arg]
         database_url=f"sqlite:///{tmp_path / 'hound-test.db'}",
         blocklist_path=blocklist_file,
+        allowlist_path=tmp_path / "allowlist.txt",  # absent: the owner's own allowlist never affects tests
         geo_ranges_path=geo_file,
         ingest_token_path=tmp_path / ".ingest_token",
         allowed_hosts="testserver,127.0.0.1,localhost",

@@ -18,13 +18,42 @@ from collections.abc import Sequence
 from app.core.netutils import is_local_address
 from app.models.events import NetworkEvent, PacketType
 from app.models.processed import Enrichment
-from app.models.risk import RiskAssessment
+from app.models.risk import RiskAssessment, RiskReason
 from app.risk.behavior import BehaviorSnapshot, DeviceBehaviorTracker
 from app.risk.config import RiskConfig
 from app.risk.signals import RiskContext, RiskSignal, default_signals
 
 NXDOMAIN_RCODE = 3
 MAX_SCORE = 100
+ALLOWLISTED = "ALLOWLISTED"
+BLOCKLISTED = "BLOCKLISTED_DOMAIN"
+
+
+def apply_allowlist(reasons: Sequence[RiskReason], enrichment: Enrichment) -> list[RiskReason]:
+    """Drop indicators the owner's allowlist covers, recording them in one 0-point reason.
+
+    A domain entry covers every indicator of the event (it is a decision about that exact
+    name, stronger than a blocklist entry above it). A device entry covers behavioural
+    indicators but never a blocklist hit: a trusted device contacting a known-bad domain
+    is still reported.
+    """
+    if enrichment.allowlisted_domain:
+        entry, kind, suppressed = enrichment.allowlisted_domain, "domain", list(reasons)
+    elif enrichment.allowlisted_device:
+        entry, kind = enrichment.allowlisted_device, "device"
+        suppressed = [reason for reason in reasons if reason.code != BLOCKLISTED]
+    else:
+        return list(reasons)
+    if not suppressed:
+        return list(reasons)
+    kept = [reason for reason in reasons if reason not in suppressed]
+    codes = ", ".join(reason.code for reason in suppressed)
+    note = RiskReason(
+        code=ALLOWLISTED,
+        points=0,
+        description=f"Allowlisted {kind} {entry}: {len(suppressed)} indicator(s) not counted ({codes})",
+    )
+    return [*kept, note]
 
 
 class RiskEngine:
@@ -49,6 +78,7 @@ class RiskEngine:
         behavior = self._behavior_for(event)
         ctx = RiskContext(event=event, enrichment=enrichment, behavior=behavior, config=self.config)
         reasons = [reason for signal in self._signals if (reason := signal.evaluate(ctx)) is not None]
+        reasons = apply_allowlist(reasons, enrichment)
         reasons.sort(key=lambda r: (-r.points, r.code))
         score = min(MAX_SCORE, sum(r.points for r in reasons))
         return RiskAssessment(score=score, level=self.config.level_for(score), reasons=tuple(reasons))
