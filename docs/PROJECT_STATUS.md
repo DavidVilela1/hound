@@ -5,16 +5,17 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 6: task 14.3a lock files + CHANGELOG)
+Last updated:      2026-09-28 (session 7: task 15a `doctor` environment check)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached, M2 on Linux only)
-Current phase:     Phase 14 — Release hardening (14.1 Windows, 14.2, 14.3a, 14.4 done;
-                   remaining items wait on the owner) → Phase 15 starts meanwhile
+Current phase:     Phase 15 — Observability & diagnostics (15a done), started while the
+                   remaining Phase 14 items wait on the owner
 Current task:      none in progress
-Next task:         15a `hound doctor` environment diagnostic
+Next task:         15b `/api/metrics` (pipeline counters for the field trial)
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
-                   tested capture daemon and an automatically tested dashboard (92 % line
-                   coverage) and reproducible, hash-checked installs. Linux: 252 tests pass
-                   (Py 3.11 + 3.13, from the lock). Owner's Windows laptop:
+                   tested capture daemon, an automatically tested dashboard, reproducible
+                   hash-checked installs and a read-only `doctor` setup check (93 % line
+                   coverage). Linux: 299 tests pass (Py 3.11 + 3.13, from the lock). Owner's
+                   Windows laptop:
                    last run 231 + 2 expected skips (before 14.4b). Not yet exercised: live
                    capture on Windows, macOS, CI.
 ```
@@ -35,7 +36,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       252 tests, 92% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       299 tests, 93% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows last confirmed at 231 (before 14.4b); CI never run
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -50,6 +51,17 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-28 s7 | `pytest` with 15a — **owner's Windows laptop** | Windows | **1 failed**, 283 passed, 3 skipped: `test_database_path_with_spaces_and_special_characters` — "unable to open database file" |
+| 2026-09-28 s7 | Diagnosis of that failure | Linux | real bug in `Settings.resolved_database_url` (existing since the first build): the path was put into the URL unencoded, so `%20` in a folder name was decoded to a space (Windows strips trailing spaces → cannot open; Linux silently used a *different* folder, so the Linux run passed) and `?` truncated the path |
+| 2026-09-28 s7 | After the fix: `pytest` (dev env / 3.11 lock / 3.13 lock); ruff; mypy ×3 platforms; smoke | Linux | 299 / 299 / 299 passed; clean; smoke all passed |
+| 2026-09-28 s7 | Old URL code against the new tests | Py 3.11 | exactly the `%20` and `?` cases fail (5 tests); fixed code: all pass |
+| 2026-09-28 s7 | Real demo server started from a copy of the project in `…/Ambiente de Trabalho #1 %20 what?/hound` | Linux | database created in that folder's `data/`; 8 events served; `doctor`: running server found, schema v1 current, 0 problems |
+| 2026-09-28 s7 | `pytest` (dev env / fresh lock venvs) | Py 3.11.15 / 3.11 lock / 3.13.7 lock | 287 / 287 / 287 passed; coverage 93 % (`doctor.py` 93 %) |
+| 2026-09-28 s7 | `ruff check`, `ruff format --check`, `mypy` (+ `--platform win32/darwin`), compileall, smoke test | both lock venvs | clean ×all (61 source files, 85 formatted); smoke all passed |
+| 2026-09-28 s7 | `python run.py doctor` before and while a real demo server ran (lock venv 3.13, temp data dir) | Linux | 0 problems; port check identified "Hound 1.0.0 is running"; database "schema v1, current"; token OK; `-i lo` found; token/DB bytes unchanged by the check |
+| 2026-09-28 s7 | Read-only probe: plain `mode=ro` on a closed WAL database | SQLite (Py 3.11) | **created** `-wal` + `-shm` → switched to `immutable=1` when no WAL exists; verified nothing is created |
+| 2026-09-28 s7 | Mutation check of `tests/test_doctor.py` (8 breakages: no immutable open, no Hound probe, adopt any legacy DB, no newer-schema check, no OneDrive marker, no token-permission check, exit code always 0, no version compare) | Py 3.11 | each caught; original restored |
+| 2026-09-28 s7 | `doctor` wall time (warm) | Linux | 0.6–1.0 s |
 | 2026-09-28 s6 | `uv pip compile … --only-binary :all:` against the locks for Windows x86-64, macOS x86-64 + arm64, Linux x86-64 × Py 3.11/3.12/3.13/3.14 | uv 0.8.17 | all 16 resolve: a wheel exists for every pin |
 | 2026-09-28 s6 | Fresh venvs, `pip install -r requirements-dev.lock` (plain pip, hash mode), then compileall, ruff check + format, mypy, pytest, smoke test | Py 3.11.15 / Py 3.13.7 | `pip check` ok; all clean; 252 passed / 252 passed; smoke all passed |
 | 2026-09-28 s6 | Fresh venv, `pip install -r requirements.lock` (runtime only, pip 24.0) then pytest + smoke | Py 3.11 | 252 passed; smoke all passed; ruff absent as intended |
@@ -86,7 +98,7 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s3 | `pytest` with 14.2 — **owner's Windows laptop** | Windows | 223 passed, 2 skipped (the two POSIX file-mode tests; expected) |
 | 2026-09-28 s3 | Smoke test with 14.2 on Windows | Windows | owner replied "good" after the request; output not shared |
 | 2026-09-28 s4 | `pytest` with 14.4a — **owner's Windows laptop** | Windows | 231 passed, 2 skipped (POSIX file-mode tests; expected) in 12.7 s |
-| — | 14.4b + 14.3a on Windows | — | **not run yet** (expected: 250 passed, 2 skipped) |
+| — | Windows re-run with the URL fix | — | **not run yet** (expected: 292 passed, 3 skipped) |
 | — | `.github/workflows/ci.yml` on GitHub; live capture on Windows; anything on macOS | — | **not run** |
 
 ## 3. Completed
@@ -144,28 +156,46 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
     3.11; the old command failed).
   - Note: the lock resolves newer versions than the previous dev environment (e.g.
     uvicorn 0.46 → 0.54, pydantic-settings 2.14 → 2.15); validated in fresh environments.
+- **15a `doctor` environment check (session 7):**
+  - `python run.py doctor [-i IFACE]` → `app/services/doctor.py`: 10 read-only checks
+    (Python, packages vs. `requirements.lock`, capture driver via Scapy's own
+    Npcap/libpcap detection, privileges, interface, bind address, port — recognises a
+    running Hound via `/health` —, cloud-synced data folder, database schema/adoption/
+    upgrade/writability, ingest token incl. POSIX permissions). Each non-OK result names
+    the fix; exit status 1 on any failure.
+  - Read-only by construction and by test: the database is opened `immutable` when no WAL
+    exists (plain read-only mode was found to create `-wal`/`-shm` files).
+  - `is_privileged()` moved to `app/core/privileges.py` (CLI keeps `_is_privileged`).
+  - `tests/test_doctor.py` (35 tests); README §11 "First: check your setup", command table,
+    troubleshooting row; ARCHITECTURE §3.11a; CHANGELOG.
+  - **Bug found by the owner's Windows run and fixed:** `Settings.resolved_database_url`
+    built the SQLite URL from the raw path, so a project folder containing `%XX` or `?`
+    pointed the database elsewhere (Linux) or failed to open it (Windows). SQLAlchemy now
+    renders the URL (percent-encoded). My Linux test had passed only because it checked
+    that a database worked, not *where* it was created; the tests now assert the location
+    and cover awkward project folder names (12 new cases). README notes that explicit
+    `HOUND_DATABASE_URL` paths with `%`, `?`, `#` must be encoded.
 
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **15a `hound doctor`.** A read-only command that checks Python version, installed
-   package versions vs. the lock, Scapy + libpcap/Npcap availability, privileges, the
-   chosen interface, port availability, data-directory/database writability and token
-   presence, and prints one actionable line per problem. Unblocked; directly prepares the
-   owner's Windows live-capture test (M2 on Windows), the main blocked item.
+1. **15b `/api/metrics`.** Read-only JSON counters that answer "did we lose anything?"
+   during a field trial: per-stage drops (capture queue, forwarder, ingest, WebSocket),
+   queue high-water mark, batch latency p50/p95, parser malformed count, DB size. Only
+   counters that drive a decision. Unblocked.
 2. 14.3b LICENSE + version label, once the owner decides.
 3. When the project is on GitHub: confirm the CI run (macOS coverage).
-4. 15b `/api/metrics`; 15c commit the benchmark script.
+4. 15c commit the benchmark script.
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
 | License | Choose a license (e.g. MIT, Apache-2.0, GPL-3.0, or "all rights reserved") | 14.3b |
 | Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3b |
-| Windows re-run | `pip install -r requirements.lock`, then `pytest` on the laptop (expect 250 passed, 2 skipped) | confirming 14.4b + 14.3a on Windows |
+| Windows re-run | `python -m pytest -q` with the fix (expect 292 passed, 3 skipped) and `python run.py doctor` | confirming 15a and the URL fix on Windows |
 | CI on GitHub | Push the project to a GitHub repository | macOS verification; automatic checks on every change |
-| Windows live capture | Install Npcap, then `python run.py capture -i "Wi-Fi"` from an Administrator shell with the server running | M2 on Windows |
+| Windows live capture | Install Npcap; `python run.py doctor -i "Wi-Fi"` should show no problems; then `python run.py capture -i "Wi-Fi"` from an Administrator shell with the server running | M2 on Windows |
 | Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host) | M7 |
 
 ## 7. Technical debt
@@ -189,8 +219,14 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 - The forwarder opens one TCP connection per batch (ADR-016); fine at the current cadence.
 - `Database.initialize()` runs twice at server start (CLI pre-flight + lifespan); the second
   run is a no-op version check. Harmless; revisit only if start-up time matters.
-- `cli.py` 74 % and `logging_config.py` 40 % coverage.
-- The test suite now takes ~18 s (was ~10 s): dashboard tests ~9.7 s, daemon tests ~4.5 s.
+- `cli.py` 79 % and `logging_config.py` 40 % coverage; `privileges.py` 55 % on Linux (the
+  Windows branch runs only on Windows).
+- `doctor`'s database-writability check uses `os.access`, which ignores Windows ACL
+  details; a false "writable" is possible there (the server then reports the real error).
+- `doctor`'s SQLite URI form (`file:///C:/…`) is verified on Linux only; the Windows run of
+  `test_database_path_with_spaces_and_special_characters` will confirm it.
+- The test suite now takes ~21–24 s: dashboard ~9.7 s, daemon ~4.5 s, doctor ~3 s (2 s
+  of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
 - The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,
   `_render_pipeline`) to avoid waiting on 2–5 s UI timers. Cheap to maintain; if the page

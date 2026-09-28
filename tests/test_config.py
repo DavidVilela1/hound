@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.engine import URL, make_url
 
+from app.core import config as config_module
 from app.core.config import DEFAULT_BPF_FILTER, PROJECT_ROOT, Settings, load_settings, split_csv
 
 
@@ -67,11 +70,38 @@ def test_threshold_order_enforced() -> None:
 
 def test_relative_paths_resolve_against_project_root(tmp_path: Path) -> None:
     s = make(database_url="sqlite:///data/x.db")
-    assert s.resolved_database_url == f"sqlite:///{(PROJECT_ROOT / 'data' / 'x.db').resolve().as_posix()}"
+    assert make_url(s.resolved_database_url).database == (PROJECT_ROOT / "data" / "x.db").resolve().as_posix()
     assert s.resolve_path(Path("config/blocklist.txt")) == (PROJECT_ROOT / "config" / "blocklist.txt").resolve()
     absolute = tmp_path / "a.db"
-    assert make(database_url=f"sqlite:///{absolute}").resolved_database_url == f"sqlite:///{absolute.as_posix()}"
+    assert make_url(make(database_url=f"sqlite:///{absolute}").resolved_database_url).database == absolute.as_posix()
     assert make(database_url="sqlite:///:memory:").resolved_database_url == "sqlite:///:memory:"
+
+
+# Folder names that broke the URL before it was rendered by SQLAlchemy ("%20" was decoded,
+# "?" cut the path). The last two are invalid on Windows, so they run on POSIX only.
+AWKWARD_FOLDERS = ["Ambiente de Trabalho #1 %20", "Área de Trabalho", "100%", "a@b;c+d"]
+if sys.platform != "win32":
+    AWKWARD_FOLDERS += ["what?", "tab\tname"]
+
+
+@pytest.mark.parametrize("folder", AWKWARD_FOLDERS)
+def test_project_folder_with_awkward_name_keeps_the_database_inside_it(
+    tmp_path: Path, folder: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real-world case: the project itself lives in such a folder and the default,
+    # relative database URL is anchored there.
+    root = tmp_path / folder
+    monkeypatch.setattr(config_module, "PROJECT_ROOT", root)
+    parsed = make_url(make(database_url="sqlite:///data/hound.db?timeout=10").resolved_database_url)
+    assert parsed.database == (root / "data" / "hound.db").resolve().as_posix()
+    assert dict(parsed.query) == {"timeout": "10"}  # query options survive
+
+
+@pytest.mark.parametrize("folder", AWKWARD_FOLDERS)
+def test_encoded_absolute_database_url_round_trips(tmp_path: Path, folder: str) -> None:
+    target = (tmp_path / folder / "hound.db").as_posix()
+    given = URL.create("sqlite", database=target).render_as_string()  # how such a path must be written
+    assert make_url(make(database_url=given).resolved_database_url).database == target
 
 
 def test_derived_collections() -> None:

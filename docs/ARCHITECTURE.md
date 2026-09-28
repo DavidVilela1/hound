@@ -171,12 +171,26 @@ tested · extension points. File references are to the current code.
 
 ### 3.11 Composition & lifecycle — `app/services/runtime.py`, `app/api/app.py`, `app/cli.py`
 * **Responsibility:** build and wire all components; start/stop order; run modes
-  (`idle`, `demo`, `capture`); CLI commands (`serve`, `capture`, `interfaces`).
+  (`idle`, `demo`, `capture`); CLI commands (`serve`, `capture`, `interfaces`, `doctor`).
 * **Failure modes:** DB init failure aborts start-up with a clear log line; source
   failures are non-fatal (API/dashboard keep running).
 * **Shutdown order:** source stop → worker drains queue → broadcaster unbind → engine
   dispose (FastAPI lifespan). Capture daemon: SIGINT/SIGTERM → capture stop → forwarder
   final flush.
+
+### 3.11a Environment diagnostic — `app/services/doctor.py` (`doctor` command)
+* **Responsibility:** read-only checks of what Hound needs from the machine (Python,
+  packages vs. `requirements.lock`, capture driver via Scapy's own detection, privileges,
+  interface, bind address, port, cloud-synced data folder, database, ingest token); one
+  status + fix per check; exit code 1 on any failure.
+* **Read-only guarantee:** never creates the database, token or directories. The database
+  is opened `mode=ro`, and additionally `immutable=1` when no `-wal` file exists — plain
+  read-only mode would otherwise create `-wal`/`-shm` files (verified), with default
+  permissions. The port check binds and releases a socket; if the port is taken it
+  identifies a running Hound via `GET /health` (proxy-free opener, ADR-016).
+* **Tests:** `tests/test_doctor.py` — each check's outcomes (platform-specific ones via
+  injected inputs, so the Windows/Npcap branch runs on Linux), a real running server,
+  the read-only guarantee (directory snapshot before/after), and the CLI exit codes.
 
 ### 3.12 Capture daemon & forwarder — `app/ingestion/daemon.py`, `forwarder.py`
 * **Responsibility:** privileged process: capture → local queue → batched POSTs.

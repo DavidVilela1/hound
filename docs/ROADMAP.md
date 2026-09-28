@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (14.3a done; next: 15a `hound doctor`).
+> Last reviewed: 2026-09-28 (15a done; next: 15b `/api/metrics`).
 
 ---
 
@@ -19,8 +19,8 @@ system trustworthy on the owner's real platform (Windows) and network, then exte
 | Stage | Phases | Milestone | State |
 |---|---|---|---|
 | Foundation → working system | 0–13 | M0–M5 | ✅ Done (Linux-verified) |
-| **Release hardening** | **14** | **M6 — Production-quality local build** | 🔶 **In progress** |
-| Observe & tune on a real network | 15–16 | M7 — Field-validated | Not started |
+| **Release hardening** | **14** | **M6 — Production-quality local build** | 🔶 In progress (rest waits on owner) |
+| **Observe & tune on a real network** | **15–16** | **M7 — Field-validated** | 🔶 **In progress** (15a done) |
 | Data lifecycle & device identity | 17–18 | M8 — Durable & device-aware | Not started |
 | Alerting | 19 | M9 — Actionable | Not started |
 | Coverage & distribution | 20–21 | M10 — Distributable 1.0 | Not started |
@@ -141,7 +141,7 @@ Examples for upcoming work:
 | 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
 | 10 Dashboard | `app/frontend` | VERIFIED | `tests/test_dashboard.py` (NiceGUI user simulation vs. real API); visuals manual |
 | 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
-| 12 Testing & hardening | 252 tests, 92 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED (Linux) | Linux Py 3.11 + 3.13; Windows run by owner up to 14.4a; macOS via CI once on GitHub |
+| 12 Testing & hardening | 299 tests, 93 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED (Linux) | Linux Py 3.11 + 3.13; Windows run by owner up to 14.4a; macOS via CI once on GitHub |
 | 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | Windows statements corrected in 14.1; not yet confirmed on a Windows machine |
 
 ### Phase 14 — Release hardening → M6 *(current)*
@@ -270,7 +270,13 @@ M6 stays open until its exit criteria are met.*
   stage, WS drops, parser malformed rate, DB size); `hound doctor` (Python, Scapy,
   libpcap/Npcap, privileges, interface, port, DB writability); commit the benchmark script
   (`scripts/benchmark.py`) used for the baseline in §I.
-* **Slices:** **15a `hound doctor` ← next task** · 15b `/api/metrics` · 15c benchmark script.
+* **Slices:** 15a `hound doctor` — **DONE** · **15b `/api/metrics` ← next task** · 15c benchmark script.
+* **15a outcome (2026-09-28):** `python run.py doctor [-i IFACE]` (`app/services/doctor.py`),
+  10 read-only checks with a fix per problem, exit 1 on failure; verified against a real
+  running server; the read-only guarantee needed SQLite's `immutable` mode (plain
+  read-only mode creates `-wal`/`-shm` files). 35 tests, mutation-checked. The owner's
+  Windows run then exposed an older bug: the database URL was built from the unencoded
+  path (`%20`/`?` in a folder name broke it) — fixed, with location-asserting tests.
 * **Acceptance:** a field trial can answer "did we lose anything?" from metrics alone;
   `hound doctor` names the fix for each environment problem it finds.
 * **Risk:** metric creep — keep to counters that drive a decision.
@@ -355,10 +361,10 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28, after 14.3a): 252 tests, 92 % line coverage (`migrations.py` 100 %,
-`daemon.py` 96 %, `dashboard.py` 96 %, `components.py` 91 %); gaps: `frontend/client.py` 68 %
-(WebSocket reconnect loop), `cli.py` 74 %, `core/logging_config.py` 40 %. The suite takes ~18 s
-(dashboard ~9.7 s, daemon ~4.5 s).
+Current numbers (2026-09-28, after 15a + URL fix): 299 tests, 93 % line coverage (`migrations.py` 100 %,
+`daemon.py` 96 %, `dashboard.py` 96 %, `doctor.py` 93 %, `components.py` 91 %); gaps:
+`frontend/client.py` 68 % (WebSocket reconnect loop), `cli.py` 79 %, `core/logging_config.py` 40 %.
+The suite takes ~21–24 s (dashboard ~9.7 s, daemon ~4.5 s, doctor ~3 s).
 
 ---
 

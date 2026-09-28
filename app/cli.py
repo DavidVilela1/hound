@@ -5,13 +5,13 @@ Commands (``serve`` is the default and may be omitted)::
     python run.py [serve] [--demo | --interface IFACE] [--host H] [--port P] [--no-dashboard]
     python run.py capture --interface IFACE [--api-url URL]
     python run.py interfaces
+    python run.py doctor [--interface IFACE]
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from collections.abc import Sequence
 
@@ -20,10 +20,11 @@ from pydantic import ValidationError
 from app import __version__
 from app.core.config import Settings, load_settings
 from app.core.logging_config import configure_logging
+from app.core.privileges import is_privileged as _is_privileged
 
 logger = logging.getLogger("hound")
 
-COMMANDS = ("serve", "capture", "interfaces")
+COMMANDS = ("serve", "capture", "interfaces", "doctor")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Only monitor networks you own or are authorised to monitor.",
     )
     parser.add_argument("--version", action="version", version=f"hound {__version__}")
-    sub = parser.add_subparsers(dest="command", metavar="{serve,capture,interfaces}")
+    sub = parser.add_subparsers(dest="command", metavar="{serve,capture,interfaces,doctor}")
 
     serve = sub.add_parser("serve", help="Run the API and dashboard (default command).")
     source = serve.add_mutually_exclusive_group()
@@ -61,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--log-level", help="DEBUG, INFO, WARNING or ERROR.")
 
     sub.add_parser("interfaces", help="List network interfaces available for capture.")
+
+    doctor = sub.add_parser(
+        "doctor", help="Check this computer's setup (packages, capture driver, port, database) without changing it."
+    )
+    doctor.add_argument("-i", "--interface", help="Also check that this capture interface exists.")
     return parser
 
 
@@ -70,18 +76,6 @@ def normalize_argv(argv: Sequence[str]) -> list[str]:
     if not args or (args[0] not in COMMANDS and args[0] not in ("-h", "--help", "--version")):
         args.insert(0, "serve")
     return args
-
-
-def _is_privileged() -> bool:
-    """``True`` when running as root (POSIX) or as an elevated Administrator (Windows)."""
-    if sys.platform == "win32":
-        import ctypes
-
-        try:
-            return bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except (AttributeError, OSError):
-            return False
-    return os.geteuid() == 0
 
 
 def cmd_serve(args: argparse.Namespace, settings: Settings) -> int:
@@ -163,6 +157,14 @@ def cmd_interfaces() -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
+    from app.services.doctor import exit_code, render, run_checks
+
+    checks = run_checks(settings, interface=args.interface)
+    print(render(checks))
+    return exit_code(checks)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(normalize_argv(sys.argv[1:] if argv is None else argv))
@@ -183,6 +185,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_capture(args, settings)
         if args.command == "interfaces":
             return cmd_interfaces()
+        if args.command == "doctor":
+            return cmd_doctor(args, settings)
         return cmd_serve(args, settings)
     except KeyboardInterrupt:
         return 130

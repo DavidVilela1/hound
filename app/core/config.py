@@ -15,7 +15,6 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlencode
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -187,8 +186,9 @@ class Settings(BaseSettings):
         db_path = Path(url.database).expanduser()
         if not db_path.is_absolute():
             db_path = (PROJECT_ROOT / db_path).resolve()
-        query = f"?{urlencode(dict(url.query), doseq=True)}" if url.query else ""
-        return f"{url.drivername}:///{db_path.as_posix()}{query}"
+        # Let SQLAlchemy render the URL: it percent-encodes the path, so folder names containing
+        # "%", "?", "#", "@" etc. survive being parsed again (a plain f-string did not).
+        return url.set(database=db_path.as_posix()).render_as_string(hide_password=False)
 
     @property
     def allowed_host_list(self) -> list[str]:

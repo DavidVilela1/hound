@@ -221,6 +221,9 @@ Other useful settings (full list with comments in `.env.example`):
 `HOUND_RISK_*` thresholds. Relative paths are resolved against the project
 directory, never the current working directory, so no machine-specific paths
 are needed. Invalid values stop start-up with a clear message.
+`HOUND_DATABASE_URL` is a URL: if you write an explicit path containing `%`,
+`?` or `#`, encode them (`%25`, `%3F`, `%23`). The project's own location may
+contain any characters; Hound encodes it itself.
 
 **Blocklist** (`config/blocklist.txt`): one domain per line; `#` comments,
 `*.domain` and hosts-file lines (`0.0.0.0 domain`) are accepted. The sample
@@ -289,6 +292,20 @@ python run.py --demo --no-dashboard         # API only
 
 ## 11. Running real packet capture
 
+### First: check your setup
+
+```bash
+python run.py doctor                 # add -i "Wi-Fi" (or eth0, en0) to check an interface
+```
+
+`doctor` checks, without changing anything: the Python version, installed
+packages against `requirements.lock`, the capture driver (Npcap on Windows,
+libpcap elsewhere), privileges, the interface, the bind address, whether the
+port is free or already used by a running Hound, cloud-synced data folders,
+the database (readable, schema version, upgrades) and the ingest token. Each
+problem comes with the fix. It exits with status 1 if something would stop
+Hound from working, so it can also be scripted.
+
 ### Recommended: split mode (only the capture daemon is privileged)
 
 Terminal 1 – API + dashboard as your normal user:
@@ -352,6 +369,7 @@ closed local ports; they appear in the dashboard within a second.
 | `python run.py capture -i IFACE` | capture daemon only → forwards to API | capture rights |
 | `python run.py -i IFACE` | everything in one process | capture rights |
 | `python run.py interfaces` | list interfaces | none (usually) |
+| `python run.py doctor [-i IFACE]` | read-only environment check | none (run it elevated to check capture rights) |
 
 `python -m app …` and (after `pip install -e .`) `hound …` accept the same arguments.
 
@@ -510,6 +528,7 @@ client. `scripts/smoke_test.py` uses a temporary database and a free port.
 
 | Symptom | Fix |
 |---|---|
+| Not sure what is wrong | Run `python run.py doctor` (add `-i IFACE`); it names the fix for each problem it finds. |
 | `Permission denied opening interface …` | Run the capture daemon with sudo/Administrator or grant `CAP_NET_RAW` (see §12). The server itself keeps running. |
 | `Network interface '…' not found` | Use a name from `python run.py interfaces`. |
 | `Packet capture driver unavailable` / `libpcap is not available` | Install libpcap (Linux) or Npcap (Windows). |
@@ -538,7 +557,7 @@ hound/
 ├── app/
 │   ├── __init__.py            # version
 │   ├── __main__.py            # python -m app
-│   ├── cli.py                 # serve / capture / interfaces commands
+│   ├── cli.py                 # serve / capture / interfaces / doctor commands
 │   ├── api/
 │   │   ├── app.py             # FastAPI factory: middleware, lifespan, routers
 │   │   ├── deps.py            # dependency helpers, input validation
@@ -548,6 +567,7 @@ hound/
 │   │   ├── config.py          # Settings (env/.env/CLI), path resolution
 │   │   ├── logging_config.py  # text/JSON structured logging
 │   │   ├── netutils.py        # IP/domain validation & normalisation, entropy
+│   │   ├── privileges.py      # root / Administrator detection
 │   │   └── security.py        # ingest token handling
 │   ├── database/
 │   │   ├── engine.py          # engine, sessions, SQLite pragmas, auto-init
@@ -583,6 +603,7 @@ hound/
 │   │   ├── signals.py         # individual signals
 │   │   └── engine.py          # RiskEngine
 │   └── services/
+│       ├── doctor.py          # read-only environment checks (`doctor` command)
 │       ├── runtime.py         # composition root (wiring & lifecycle)
 │       ├── processing.py      # worker: enrich → score → persist → publish
 │       ├── store.py           # transactional persistence + retention

@@ -11,6 +11,10 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **`python run.py doctor [-i IFACE]`**: a read-only environment check (Python, packages
+  vs. the lock, Npcap/libpcap, privileges, interface, bind address, port, cloud-synced
+  data folder, database schema, ingest token) that names the fix for each problem; exit
+  status 1 when something would stop Hound from working.
 - **Dependency lock files** `requirements.lock` and `requirements-dev.lock`: exact
   versions with SHA-256 hashes, one file for Windows, macOS and Linux on Python 3.11+.
   CI installs the lock; a non-blocking CI job tries the newest versions the ranges allow.
@@ -41,6 +45,9 @@ Until then everything is listed under **Unreleased**.
 - Lint and type-check settings moved into `pyproject.toml`, so local runs match CI.
 
 ### Fixed
+- The database path was built into a URL without encoding, so a project folder whose
+  name contains `%XX` (e.g. `%20`) or `?` put the database in a different folder (Linux)
+  or failed to open it (Windows). Found by the owner's Windows test run.
 - The capture daemon honoured `HTTP(S)_PROXY` for its calls to the local API, so behind
   a proxy no events were delivered. It now always connects directly.
 - Administrator detection on Windows (`_is_privileged()` always returned false).
