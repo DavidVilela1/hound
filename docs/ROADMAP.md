@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (15b done; next: 15c benchmark script).
+> Last reviewed: 2026-09-28 (Phase 15 done; next: 16a allowlist).
 
 ---
 
@@ -272,7 +272,9 @@ M6 stays open until its exit criteria are met.*
   stage, WS drops, parser malformed rate, DB size); `hound doctor` (Python, Scapy,
   libpcap/Npcap, privileges, interface, port, DB writability); commit the benchmark script
   (`scripts/benchmark.py`) used for the baseline in §I.
-* **Slices:** 15a `hound doctor` — **DONE** · 15b `/api/metrics` — **DONE** · **15c benchmark script ← next task**.
+* **Slices:** 15a `hound doctor` — **DONE** · 15b `/api/metrics` — **DONE** · 15c benchmark script — **DONE** → **Phase 15 done**.
+* **15c outcome (2026-09-28):** `scripts/benchmark.py` (+ `tests/test_benchmark.py`, quick
+  mode, so it runs in CI on all three OSes); reproduced the §I baseline — see §I.
 * **15b outcome (2026-09-28):** `GET /api/metrics` with per-stage loss + total, queue
   high-water, batch latency p50/p95, ingest rejections, WS drops, DB size, retention
   pruning; the capture daemon's counters travel inside its ingest batches (ADR-020), so
@@ -288,6 +290,9 @@ M6 stays open until its exit criteria are met.*
 * **Risk:** metric creep — keep to counters that drive a decision.
 
 ### Phase 16 — Field trial & detection tuning → M7
+* **Slices:** **16a allowlist ← next task** (no owner hardware needed) · 16b risk
+  settings from an optional TOML file · 16c blocklist reload without restart · 16d field
+  trial + tuning (needs the owner's monitoring position).
 * **Tasks:** run on the owner's network ≥ 7 days (split mode); review every
   suspicious/dangerous event; add an **allowlist** (domains/devices never flagged);
   load signal weights/thresholds from an optional TOML file (stdlib `tomllib`, no new
@@ -376,19 +381,23 @@ The suite takes ~21–24 s (dashboard ~9.7 s, daemon ~4.5 s, doctor ~3 s).
 
 ## I. Performance plan
 
-**Measured baseline** (dev sandbox, 1 vCPU class, Python 3.11, demo traffic mix):
+**Measured baseline** — reproduce with `python scripts/benchmark.py --rows 250000`
+(dev sandbox, 2 vCPU, Linux, Python 3.11; 2026-09-28, 15c). API figures go through the
+in-process HTTP stack incl. JSON; the session-1 figures in brackets called the services
+directly with shorter synthetic domains.
 
 | Path | Result |
 |---|---|
-| Scapy dissection of raw frames | ≈ 4 700 pkt/s — **the bottleneck** |
-| Parser (dissected packet → `NetworkEvent`) | ≈ 14 500 pkt/s |
-| Processing, batch = 1 | ≈ 800 events/s |
-| Processing, batch = 50–200 (enrich + risk + commit) | ≈ 5 400 events/s |
-| `/api/stats` at 13 k / 250 k rows | 7 ms / 71 ms |
-| `/api/stats/countries` at 250 k rows | 41 ms |
-| `/api/events` (50 rows, incl. total count) at 250 k rows | 5 ms (16 ms with domain substring) |
-| DB size | ≈ 390 B/event → ≈ 93 MiB at the 250 000-event cap |
-| Process RSS during benchmark | ≈ 185 MiB |
+| Scapy dissection of raw frames | ≈ 3 700–4 700 pkt/s — **the bottleneck** |
+| Parser (dissected packet → `NetworkEvent`) | ≈ 13 600–14 300 pkt/s |
+| Processing, batch = 1 | ≈ 730–830 events/s |
+| Processing, batch = 50 / 200 (enrich + risk + commit) | ≈ 5 000–5 800 / 5 800–6 100 events/s; batch p95 ≈ 15 / 45–52 ms |
+| `/api/stats` at 50 k / 250 k rows | 20 ms / 81 ms (s1: 71 ms) |
+| `/api/stats/countries` at 250 k rows | 55 ms (s1: 41 ms) |
+| `/api/events` (50 rows, incl. total count) at 250 k rows | 7.5 ms; 25 ms with domain substring (s1: 5 / 16 ms) |
+| `/api/devices`, `/api/metrics` at 250 k rows | 4 ms, 2 ms |
+| DB size (after WAL checkpoint) | ≈ 516 B/event with the demo mix → ≈ 123 MiB at the 250 000-event cap (s1: 390 B, 93 MiB) |
+| Peak process memory | ≈ 163 MiB (s1: 185 MiB) |
 
 A busy home network produces tens of DNS queries and SYNs per second — two orders of
 magnitude below these limits. **No optimisation is planned now.**

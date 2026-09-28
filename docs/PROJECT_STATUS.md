@@ -5,16 +5,17 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 8: task 15b `/api/metrics`)
+Last updated:      2026-09-28 (session 9: task 15c benchmark script — Phase 15 done)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
-Current phase:     Phase 15 — Observability & diagnostics (15a, 15b done), started while
-                   the remaining Phase 14 items (licence, version label) wait on the owner
+Current phase:     Phase 15 done (doctor, metrics, benchmark) → Phase 16 next; Phase 14's
+                   last items (licence, version label) wait on the owner
 Current task:      none in progress
-Next task:         15c benchmark script (repeatable throughput/latency measurement)
+Next task:         16a domain/device allowlist (Phase 16, no owner hardware needed)
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon, an automatically tested dashboard, reproducible
                    hash-checked installs, a read-only `doctor` setup check and per-stage
-                   loss metrics (`/api/metrics`, 94 % line coverage). Linux: 310 tests pass
+                   loss metrics (`/api/metrics`), a reproducible benchmark (94 % line
+                   coverage). Linux: 312 tests pass
                    (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
                    skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
                    capture works on Windows (split mode, Npcap, "Wi-Fi").
@@ -37,7 +38,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       310 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       312 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -102,6 +103,9 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-28 s9 | `python scripts/benchmark.py` (default 50 k rows / `--rows 250000`) | Linux, 2 vCPU, Py 3.11 | 21 s / 69 s; batch-200 ≈ 5 800–6 100 events/s; `/api/stats` 20 / 81 ms; 516 B/event; peak 163 MiB; both checks OK (details: ROADMAP §I) |
+| 2026-09-28 s9 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy; compileall; smoke; `benchmark.py --quick` | Linux | 312 / 312 / 312 passed; clean; smoke all passed; quick benchmark OK in both lock venvs; no `hound-bench-*` temp folders left |
+| 2026-09-28 s9 | First benchmark draft measured storage before a WAL checkpoint | Py 3.11 | 3 246 B/event (misleading: WAL pages) → checkpoint added before measuring |
 | 2026-09-28 s8 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock) | Linux | 310 / 310 / 310 passed; coverage 94 % (`routes/metrics.py` 100 %, `runtime.py` 94 %) |
 | 2026-09-28 s8 | ruff check + format, mypy (linux/win32/darwin), compileall, smoke test | both lock venvs | clean (62 source files, 87 formatted); smoke all passed |
 | 2026-09-28 s8 | Mutation check (8 breakages: no high-water, 413 not counted, daemon report not stored, total ignores daemon, WS drops hidden, prune not counted, batches not counted, report frozen across retries) | Py 3.11 | each caught; originals restored (cmp clean) |
@@ -198,18 +202,28 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   - `tests/test_metrics.py` (11) + end-to-end daemon test extended; README §13 + §11,
     ARCHITECTURE §3.12/§5.5, ADR-020, CHANGELOG.
 
+- **15c benchmark script (session 9):** `scripts/benchmark.py` — in-process, temporary
+  database, no network/privileges: dissection, parsing, processing at batch 1/50/200
+  (with batch latency via `summarize_latency`), fill to `--rows`, API latency of the
+  dashboard's endpoints, bytes/event after a WAL checkpoint, peak memory (POSIX
+  `resource`, Windows `GetProcessMemoryInfo`), two informational checks; `--json`,
+  `--quick`. `tests/test_benchmark.py` (2, quick mode — so CI runs it on all three OSes).
+  Reproduced the ROADMAP §I baseline (table updated). README §15 "Measuring
+  performance". **Phase 15 complete.**
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **15c Benchmark script.** Commit `scripts/benchmark.py`: feeds synthetic events
-   through the real pipeline (temp database) and reports events/s, batch latency (from
-   the new metrics) and `/api/stats` latency at a given row count, so the ROADMAP §I
-   baseline (≈ 5 400 events/s; 71 ms at 250 k rows) is reproducible on any machine,
-   including the owner's laptop. Closes Phase 15. Unblocked.
-2. 14.3b LICENSE + version label, once the owner decides.
-3. Phase 16 (field trial) prerequisites that need no owner hardware: domain/device
-   allowlist.
+1. **16a Allowlist.** Domains (suffix match, like the blocklist) and devices (IP) that
+   are never flagged: risk still computed and stored, but the level is capped at SAFE
+   with a visible "allowlisted" reason, so nothing is hidden. File-based
+   (`config/allowlist.txt`, optional), loaded at start. Prepares the field trial (known
+   false-positive candidates: CDN hostnames, the owner's own devices). Unblocked.
+2. 16b risk weights/thresholds from an optional TOML file (`tomllib`).
+3. 14.3b LICENSE + version label, once the owner decides.
+4. Owner: run `python scripts/benchmark.py` on the Windows laptop once, to record a
+   baseline for the machine that will actually run Hound.
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |

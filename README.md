@@ -539,6 +539,22 @@ initialisation/insertion/filtering/persistence/retention, the processing
 pipeline, the WebSocket stream, API validation/auth and the dashboard's API
 client. `scripts/smoke_test.py` uses a temporary database and a free port.
 
+### Measuring performance
+
+```bash
+python scripts/benchmark.py                 # ~20 s: 50 000 stored events
+python scripts/benchmark.py --rows 250000   # ~1 min: the default retention cap
+python scripts/benchmark.py --json          # machine-readable
+```
+
+Runs entirely in-process on a temporary database (no network, no privileges,
+`data/` untouched): Scapy dissection and parsing of demo traffic, processing
+throughput at batch sizes 1/50/200 with batch latency, API response times at
+the chosen database size, storage per event and peak memory. It ends with two
+informational checks — headroom over a busy home network (100 events/s) and
+`/api/stats` against the 200 ms optimisation trigger. Numbers depend on the
+machine; compare runs on the same computer.
+
 ## 16. Troubleshooting
 
 | Symptom | Fix |
@@ -632,6 +648,7 @@ hound/
 ├── docs/                      # status, roadmap, architecture, decision records
 ├── scripts/
 │   ├── smoke_test.py          # end-to-end check of demo mode
+│   ├── benchmark.py           # throughput/latency measurement (temporary DB)
 │   ├── generate_test_traffic.py
 │   ├── run_capture.sh         # sudo wrapper for the daemon (Linux/macOS)
 │   └── run_capture.ps1        # Windows helper

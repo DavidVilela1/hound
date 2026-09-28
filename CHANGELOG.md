@@ -11,6 +11,9 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **`scripts/benchmark.py`**: reproducible throughput and latency measurement on a
+  temporary database (dissection, parsing, processing at several batch sizes, API
+  latency at a chosen database size, storage per event, peak memory), text or JSON.
 - **`GET /api/metrics`**: events lost per pipeline stage (daemon queue, daemon delivery,
   server queue, processing) with a total, plus queue peak, batch latency p50/p95, ingest
   rejections by reason, WebSocket drops, database size and retention pruning. The capture
