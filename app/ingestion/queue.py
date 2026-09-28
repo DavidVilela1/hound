@@ -21,6 +21,8 @@ class QueueStats:
     capacity: int
     received: int
     dropped: int
+    high_water: int = 0
+    """Largest size the queue has reached; close to ``capacity`` means drops are near."""
 
 
 class EventQueue:
@@ -32,6 +34,7 @@ class EventQueue:
         self._lock = threading.Lock()
         self._received = 0
         self._dropped = 0
+        self._high_water = 0
 
     def offer(self, event: NetworkEvent) -> bool:
         """Enqueue without blocking. Returns ``False`` (and counts a drop) when full."""
@@ -41,8 +44,11 @@ class EventQueue:
             with self._lock:
                 self._dropped += 1
             return False
+        size = self._queue.qsize()
         with self._lock:
             self._received += 1
+            if size > self._high_water:
+                self._high_water = size
         return True
 
     def get_batch(self, max_items: int, timeout: float) -> list[NetworkEvent]:
@@ -61,7 +67,7 @@ class EventQueue:
 
     def stats(self) -> QueueStats:
         with self._lock:
-            return QueueStats(self._queue.qsize(), self._capacity, self._received, self._dropped)
+            return QueueStats(self._queue.qsize(), self._capacity, self._received, self._dropped, self._high_water)
 
     def __len__(self) -> int:
         return self._queue.qsize()

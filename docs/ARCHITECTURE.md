@@ -197,6 +197,11 @@ tested · extension points. File references are to the current code.
 * **Failure modes:** API down (exponential back-off 1→16 s, 5 attempts, then the batch is
   dropped and counted); bad token (logged, not retried); own traffic captured (filtered by
   `SelfTrafficFilter`, ADR-014); proxy in the environment (ignored for the local API).
+* **Reporting:** every POST carries the daemon's cumulative counters (`daemon` field of
+  `IngestRequest`, re-read on each retry): parsed/malformed packets, local queue drops
+  and peak, forwarded and dropped events, failed attempts (ADR-020). The server keeps the
+  latest report for `/api/metrics`. Daemon and server must come from the same Hound
+  version: an older server rejects the field (422).
 * **Tests:** `tests/test_forwarder.py` (injected transport); `tests/test_daemon.py` runs
   split mode end to end without privileges — real parser → daemon → forwarder → live
   uvicorn server → pipeline → SQLite — with only the Scapy sniffer faked (96 % coverage of
@@ -261,8 +266,8 @@ Verified on 2026-09-28: every module imports standalone (no circular imports), a
 |---|---|---|
 | Logs | text or JSON, `extra` fields, per-event data only at DEBUG | unchanged |
 | Health | `/health` (DB ping, source state, worker alive, counters) | unchanged |
-| Metrics | counters inside `/health` and `/api/stats` | `/api/metrics` JSON: queue depth high-water mark, batch latency, drops, WS drops, parser malformed rate |
-| Diagnostics | log messages with actionable text | `hound doctor`: Python/Scapy/libpcap/Npcap, permissions, interface, DB writability, port |
+| Metrics | `GET /api/metrics` (`HoundRuntime.metrics()`, ADR-020): loss per stage + total, queue high-water, batch latency p50/p95 (last 1 000 batches), ingest rejections, WS drops, DB/WAL size, retention pruning, daemon report. In-memory, reset on restart | persist or export only if a field trial shows the need |
+| Diagnostics | `python run.py doctor` (read-only checks, fix per problem) | unchanged |
 
 ### 5.6 Security
 Least privilege (ADR-002), loopback bind, Host allow-list, WebSocket Origin check, token

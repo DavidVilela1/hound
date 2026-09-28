@@ -8,7 +8,10 @@ SQLite writer are never touched concurrently. Events arrive already validated
 from __future__ import annotations
 
 import logging
+import math
 import threading
+import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 Publisher = Callable[[list[dict[str, Any]]], None]
 
+LATENCY_SAMPLES = 1000
+"""Batch durations kept for percentiles (the most recent ones; bounded memory)."""
+
 
 @dataclass(slots=True)
 class ProcessingStats:
@@ -37,6 +43,30 @@ class ProcessingStats:
     responses_observed: int = 0
     last_event_at: datetime | None = None
     last_error: str | None = None
+    batches: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class LatencySummary:
+    """Wall-clock time per batch (enrich + score + store + publish), in milliseconds."""
+
+    samples: int
+    p50_ms: float | None
+    p95_ms: float | None
+    max_ms: float | None
+
+
+def summarize_latency(durations_ms: Sequence[float]) -> LatencySummary:
+    """Nearest-rank percentiles; ``None`` values when there are no samples."""
+    if not durations_ms:
+        return LatencySummary(0, None, None, None)
+    ordered = sorted(durations_ms)
+
+    def rank(p: float) -> float:
+        index = min(len(ordered), max(1, math.ceil(p / 100 * len(ordered)))) - 1
+        return round(ordered[index], 3)
+
+    return LatencySummary(len(ordered), rank(50), rank(95), round(ordered[-1], 3))
 
 
 class ProcessingService:
@@ -62,6 +92,7 @@ class ProcessingService:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._stats = ProcessingStats()
+        self._latencies_ms: deque[float] = deque(maxlen=LATENCY_SAMPLES)
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -95,6 +126,17 @@ class ProcessingService:
     # ------------------------------------------------------------------ processing
     def process_batch(self, events: Sequence[NetworkEvent]) -> list[EventOut]:
         """Process a batch synchronously (also used directly by tests)."""
+        started = time.perf_counter()
+        try:
+            return self._process_batch(events)
+        finally:
+            if events:
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                with self._lock:
+                    self._stats.batches += 1
+                    self._latencies_ms.append(elapsed_ms)
+
+    def _process_batch(self, events: Sequence[NetworkEvent]) -> list[EventOut]:
         processed: list[ProcessedEvent] = []
         for event in events:
             try:
@@ -151,4 +193,11 @@ class ProcessingService:
     def stats(self) -> ProcessingStats:
         with self._lock:
             s = self._stats
-            return ProcessingStats(s.processed, s.failed, s.responses_observed, s.last_event_at, s.last_error)
+            return ProcessingStats(
+                s.processed, s.failed, s.responses_observed, s.last_event_at, s.last_error, s.batches
+            )
+
+    def latency(self) -> LatencySummary:
+        with self._lock:
+            samples = list(self._latencies_ms)
+        return summarize_latency(samples)

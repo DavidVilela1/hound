@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (15a done; next: 15b `/api/metrics`).
+> Last reviewed: 2026-09-28 (15b done; next: 15c benchmark script).
 
 ---
 
@@ -141,7 +141,7 @@ Examples for upcoming work:
 | 9 Realtime transport | broadcaster + `/ws/events` | VERIFIED | WS tests + smoke test |
 | 10 Dashboard | `app/frontend` | VERIFIED | `tests/test_dashboard.py` (NiceGUI user simulation vs. real API); visuals manual |
 | 11 Demo/simulation | `app/ingestion/demo.py` | VERIFIED | `tests/test_demo.py`, smoke test |
-| 12 Testing & hardening | 299 tests, 93 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED | Linux Py 3.11 + 3.13; Windows 292 + 3 skips (owner, after 15a); GitHub Actions CI green on Linux/Windows/macOS (owner, 2026-09-28) |
+| 12 Testing & hardening | 310 tests, 94 % coverage, ruff + mypy clean (mypy also checked for win32/darwin) | VERIFIED | Linux Py 3.11 + 3.13; Windows 292 + 3 skips (owner, after 15a); GitHub Actions CI green on Linux/Windows/macOS (owner, 2026-09-28) |
 | 13 Documentation | README (20 sections), docs/ | FUNCTIONAL | Windows statements corrected in 14.1; not yet confirmed on a Windows machine |
 
 ### Phase 14 — Release hardening → M6 *(current)*
@@ -272,7 +272,11 @@ M6 stays open until its exit criteria are met.*
   stage, WS drops, parser malformed rate, DB size); `hound doctor` (Python, Scapy,
   libpcap/Npcap, privileges, interface, port, DB writability); commit the benchmark script
   (`scripts/benchmark.py`) used for the baseline in §I.
-* **Slices:** 15a `hound doctor` — **DONE** · **15b `/api/metrics` ← next task** · 15c benchmark script.
+* **Slices:** 15a `hound doctor` — **DONE** · 15b `/api/metrics` — **DONE** · **15c benchmark script ← next task**.
+* **15b outcome (2026-09-28):** `GET /api/metrics` with per-stage loss + total, queue
+  high-water, batch latency p50/p95, ingest rejections, WS drops, DB size, retention
+  pruning; the capture daemon's counters travel inside its ingest batches (ADR-020), so
+  split-mode losses are visible on the server. Verified with a real daemon on `lo`.
 * **15a outcome (2026-09-28):** `python run.py doctor [-i IFACE]` (`app/services/doctor.py`),
   10 read-only checks with a fix per problem, exit 1 on failure; verified against a real
   running server; the read-only guarantee needed SQLite's `immutable` mode (plain
@@ -363,7 +367,7 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28, after 15a + URL fix): 299 tests, 93 % line coverage (`migrations.py` 100 %,
+Current numbers (2026-09-28, after 15b): 310 tests, 94 % line coverage (`migrations.py` 100 %,
 `daemon.py` 96 %, `dashboard.py` 96 %, `doctor.py` 93 %, `components.py` 91 %); gaps:
 `frontend/client.py` 68 % (WebSocket reconnect loop), `cli.py` 79 %, `core/logging_config.py` 40 %.
 The suite takes ~21–24 s (dashboard ~9.7 s, daemon ~4.5 s, doctor ~3 s).

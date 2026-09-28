@@ -36,6 +36,8 @@ class SqlEventStore:
         self._retention = retention_max_events
         self._prune_every = max(1, prune_every_batches)
         self._batches = 0
+        self.pruned_total = 0
+        """Events deleted by the retention limit since start (deliberate, not loss)."""
 
     def save(self, items: Sequence[ProcessedEvent]) -> list[EventOut]:
         if not items:
@@ -52,6 +54,7 @@ class SqlEventStore:
     def prune(self) -> int:
         with self._db.session() as session:
             removed = EventRepository(session).prune(self._retention)
+        self.pruned_total += removed
         if removed:
             logger.info("Retention limit applied", extra={"removed_events": removed, "limit": self._retention})
         return removed

@@ -11,6 +11,11 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **`GET /api/metrics`**: events lost per pipeline stage (daemon queue, daemon delivery,
+  server queue, processing) with a total, plus queue peak, batch latency p50/p95, ingest
+  rejections by reason, WebSocket drops, database size and retention pruning. The capture
+  daemon now sends its own counters with each batch (optional `daemon` field on
+  `POST /api/ingest`), so split-mode losses are visible on the server (ADR-020).
 - **`python run.py doctor [-i IFACE]`**: a read-only environment check (Python, packages
   vs. the lock, Npcap/libpcap, privileges, interface, bind address, port, cloud-synced
   data folder, database schema, ingest token) that names the fix for each problem; exit

@@ -28,6 +28,7 @@ change their status or add a "Revisited" note.
 | 017 | CI on GitHub Actions; dev tools in `requirements-dev.txt`, config in `pyproject.toml` | Accepted |
 | 018 | Versioned SQLite schema: frozen baseline + ordered atomic migrations | Accepted |
 | 019 | Hash-checked, universal lock files generated with uv; CI installs the lock | Accepted |
+| 020 | Pipeline metrics as in-process JSON; the daemon reports its counters inside ingest batches | Accepted |
 
 ---
 
@@ -245,3 +246,28 @@ change their status or add a "Revisited" note.
   the non-blocking newest-versions job signal when); regeneration needs network access and
   uv; `--universal` relies on uv's marker resolution — verified on 2026-09-28 by resolving
   the lock binary-only for Windows, macOS (x86-64/arm64) and Linux on Python 3.11–3.14.
+
+## ADR-020 — In-process JSON metrics; daemon counters ride on ingest batches
+* **Context:** a field trial must answer "did we lose anything, and where?" (ROADMAP
+  Phase 15). Loss can happen in two processes: the capture daemon (local queue full,
+  delivery given up) and the server (queue full, processing/database failures). The
+  daemon's counters were only in its own log, invisible from the server.
+* **Options:** Prometheus client + scrape endpoint (new dependency, needs a scraper the
+  owner doesn't run); a separate daemon → server heartbeat endpoint (second channel,
+  more auth surface); counters piggy-backed on the batches the daemon already POSTs.
+* **Chosen:** `GET /api/metrics` returns plain JSON built by `HoundRuntime.metrics()` from
+  counters the components already keep, plus a few new ones (queue high-water mark,
+  batch count + latency window of 1 000 batches, ingest outcomes, retention pruned,
+  DB/WAL size). `loss.total_events_lost` sums the stages; WebSocket drops and retention
+  pruning are reported but not counted as loss (stored data is unaffected / deliberate).
+  The daemon adds an optional, strictly validated `daemon` object (non-negative bounded
+  integers, no unknown fields) to each authenticated ingest request; the server keeps the
+  latest one with its arrival time.
+* **Reason:** no dependency, no new endpoint to secure, works in both run modes; the
+  report travels only when the daemon can reach the server anyway — which is exactly when
+  it can be shown.
+* **Consequences:** counters are in memory and reset on restart; while the API is down,
+  the daemon's latest losses are shown only after its next successful delivery
+  (`received_at` shows staleness); one report slot, so several daemons at once would
+  overwrite each other (single-daemon design, ADR-002). An older server rejects the new
+  field, so daemon and server must be the same version (they run from one checkout).

@@ -5,19 +5,19 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 7: task 15a `doctor` environment check)
+Last updated:      2026-09-28 (session 8: task 15b `/api/metrics`)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
-Current phase:     Phase 15 — Observability & diagnostics (15a done), started while the
-                   remaining Phase 14 items wait on the owner
+Current phase:     Phase 15 — Observability & diagnostics (15a, 15b done), started while
+                   the remaining Phase 14 items (licence, version label) wait on the owner
 Current task:      none in progress
-Next task:         15b `/api/metrics` (pipeline counters for the field trial)
+Next task:         15c benchmark script (repeatable throughput/latency measurement)
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon, an automatically tested dashboard, reproducible
-                   hash-checked installs and a read-only `doctor` setup check (93 % line
-                   coverage). Linux: 299 tests pass (Py 3.11 + 3.13, from the lock). Owner's
-                   Windows laptop: 292 passed + 3 expected skips (current code). Not yet
-                   exercised: macOS, CI. Live capture works on the owner's Windows laptop
-                   (split mode, Npcap, "Wi-Fi").
+                   hash-checked installs, a read-only `doctor` setup check and per-stage
+                   loss metrics (`/api/metrics`, 94 % line coverage). Linux: 310 tests pass
+                   (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
+                   skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
+                   capture works on Windows (split mode, Npcap, "Wi-Fi").
 ```
 
 ## 1. Baseline assessment
@@ -37,7 +37,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       299 tests, 93% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       310 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -102,6 +102,11 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-28 s8 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock) | Linux | 310 / 310 / 310 passed; coverage 94 % (`routes/metrics.py` 100 %, `runtime.py` 94 %) |
+| 2026-09-28 s8 | ruff check + format, mypy (linux/win32/darwin), compileall, smoke test | both lock venvs | clean (62 source files, 87 formatted); smoke all passed |
+| 2026-09-28 s8 | Mutation check (8 breakages: no high-water, 413 not counted, daemon report not stored, total ignores daemon, WS drops hidden, prune not counted, batches not counted, report frozen across retries) | Py 3.11 | each caught; originals restored (cmp clean) |
+| 2026-09-28 s8 | `EventQueue.offer` micro-benchmark, before vs. after high-water tracking (200 k offers, 2 runs each) | Py 3.11 | ~0.32–0.42 M/s vs ~0.37–0.43 M/s: no measurable cost (pipeline itself ≈ 5 400 events/s) |
+| 2026-09-28 s8 | **Real split mode**: server (idle mode) + real capture daemon on `lo` + `scripts/generate_test_traffic.py`, then `GET /api/metrics` | Linux, lock venv 3.13 | daemon report received (interface `lo`, 4 parsed, queue peak 2); server accepted/processed 4 in 2 batches (p50 11 ms, p95 40 ms); `total_events_lost` 0; daemon exit 0 |
 | 2026-09-28 s7 | Dependency licence survey (installed runtime lock env, package metadata + Scapy SPDX headers) | Py 3.11 | all permissive or weak-copyleft (MIT, BSD, Apache-2.0, MPL-2.0, PSF) **except Scapy: GPL-2.0-only** (287 files incl. `scapy/__init__.py`; 83 files GPL-2.0-or-later). Note: Apache-2.0 packages (e.g. aiohttp, yarl, python-multipart) are, per the FSF, incompatible with GPLv2 — so the Scapy question exists independently of Hound's own licence. Hound ships source only; users install dependencies from PyPI |
 | 2026-09-28 s7 | `.github/workflows/ci.yml` on GitHub (Linux/Windows/macOS × Py 3.11/3.13, audit, newest-deps job) | GitHub Actions | owner: "CI is working perfectly" — first macOS coverage. Run logs not shared |
 
@@ -180,16 +185,31 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
     and cover awkward project folder names (12 new cases). README notes that explicit
     `HOUND_DATABASE_URL` paths with `%`, `?`, `#` must be encoded.
 
+- **15b `/api/metrics` (session 8):**
+  - `GET /api/metrics` (`app/api/routes/metrics.py`, `HoundRuntime.metrics()`): `loss`
+    per stage (daemon queue, daemon delivery, server queue, processing) + total;
+    `capture`, `daemon`, `ingest` (accepted / 401 / 422 / 413 + events), `queue` (incl.
+    high-water), `processing` (batches, latency p50/p95/max over the last 1 000 batches),
+    `websocket` (drops — not loss), `storage` (DB/WAL bytes, retention pruned — not loss).
+  - New counters: `EventQueue` high-water mark; `ProcessingService` batches + latency
+    window; `SqlEventStore.pruned_total`; ingest outcomes; `Database.file_sizes()`.
+  - Split mode: the daemon's counters ride on each ingest POST (optional, strictly
+    validated `daemon` field; refreshed on every retry) — ADR-020.
+  - `tests/test_metrics.py` (11) + end-to-end daemon test extended; README §13 + §11,
+    ARCHITECTURE §3.12/§5.5, ADR-020, CHANGELOG.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **15b `/api/metrics`.** Read-only JSON counters that answer "did we lose anything?"
-   during a field trial: per-stage drops (capture queue, forwarder, ingest, WebSocket),
-   queue high-water mark, batch latency p50/p95, parser malformed count, DB size. Only
-   counters that drive a decision. Unblocked.
+1. **15c Benchmark script.** Commit `scripts/benchmark.py`: feeds synthetic events
+   through the real pipeline (temp database) and reports events/s, batch latency (from
+   the new metrics) and `/api/stats` latency at a given row count, so the ROADMAP §I
+   baseline (≈ 5 400 events/s; 71 ms at 250 k rows) is reproducible on any machine,
+   including the owner's laptop. Closes Phase 15. Unblocked.
 2. 14.3b LICENSE + version label, once the owner decides.
-3. 15c commit the benchmark script.
+3. Phase 16 (field trial) prerequisites that need no owner hardware: domain/device
+   allowlist.
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |

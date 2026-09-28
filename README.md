@@ -357,7 +357,9 @@ python scripts/generate_test_traffic.py
 ```
 
 sends two DNS queries (one for a sample-blocklist domain) and two TCP SYNs to
-closed local ports; they appear in the dashboard within a second.
+closed local ports; they appear in the dashboard within a second, and
+`curl http://127.0.0.1:8000/api/metrics` shows the daemon's counters with
+`"total_events_lost": 0`.
 
 ### Command summary
 
@@ -431,7 +433,8 @@ Interactive docs: <http://127.0.0.1:8000/docs> (Swagger UI) and
 | `GET /api/devices/{ip}` | one device incl. recent observations | – |
 | `GET /api/stats` | totals, per-level counts, last-minute count, pipeline status | – |
 | `GET /api/stats/countries` | share of events by destination country | `include_local` (default false), `since_minutes` |
-| `POST /api/ingest` | capture-daemon ingest (≤ 1000 events, ≤ 2 MB) | header `X-Hound-Token` |
+| `GET /api/metrics` | loss per pipeline stage + queue/latency/storage counters (no domains or addresses) | – |
+| `POST /api/ingest` | capture-daemon ingest (≤ 1000 events, ≤ 2 MB), optionally with the daemon's own counters | header `X-Hound-Token` |
 | `WS /ws/events` | live stream: `{"type":"event","data":<Event>}`, plus `hello`/`heartbeat` | – |
 
 Invalid input returns **422** with details; unknown IDs **404**; a bad ingest
@@ -445,6 +448,18 @@ curl "http://127.0.0.1:8000/api/events?source_ip=192.168.1.57&since=2026-01-01T0
 curl "http://127.0.0.1:8000/api/devices?sort=risk&limit=10"
 curl "http://127.0.0.1:8000/api/stats/countries?include_local=true"
 ```
+
+**Did we lose anything?** `GET /api/metrics` answers it: `loss.total_events_lost`
+is the sum of events lost at every stage — the capture daemon's queue, its
+delivery to the server (retries exhausted, API down), the server's queue, and
+processing/database failures — each also listed separately. The daemon's
+counters travel with the event batches it already sends, so they appear once it
+has delivered its first batch (`loss.daemon_reported`). Also reported: queue
+peak (`queue.high_water` close to `capacity` means drops are near), batch
+latency p50/p95, ingest rejections (a wrong token shows up in
+`ingest.requests_unauthorized`), WebSocket messages dropped for a slow browser
+tab, database size and retention pruning — the last two are not data loss.
+Counters reset when the server or daemon restarts.
 
 **Country percentages** are computed over **events** — each stored DNS query or
 TCP connection attempt counts once — grouped by the country of the event's

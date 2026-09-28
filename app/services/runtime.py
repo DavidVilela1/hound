@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from typing import Literal
 
 from app.core.config import Settings
 from app.core.security import load_or_create_ingest_token
@@ -27,7 +29,20 @@ from app.enrichment.service import EnrichmentService
 from app.ingestion.queue import EventQueue
 from app.ingestion.sources import EventSource
 from app.models.events import NetworkEvent
-from app.models.schemas import PipelineStatus
+from app.models.schemas import (
+    CaptureMetrics,
+    DaemonMetrics,
+    DaemonReport,
+    IngestMetrics,
+    LatencyMetrics,
+    LossMetrics,
+    MetricsOut,
+    PipelineStatus,
+    ProcessingMetrics,
+    QueueMetrics,
+    StorageMetrics,
+    WebSocketMetrics,
+)
 from app.risk.config import RiskConfig
 from app.risk.engine import RiskEngine
 from app.services.broadcaster import EventBroadcaster
@@ -42,6 +57,9 @@ class RunMode(StrEnum):
     IDLE = "idle"  # API/UI only; events arrive from a capture daemon via /api/ingest
     DEMO = "demo"  # synthetic traffic generated in-process
     CAPTURE = "capture"  # in-process packet capture (whole process needs privileges)
+
+
+IngestRejection = Literal["unauthorized", "invalid", "too_large"]
 
 
 class HoundRuntime:
@@ -89,6 +107,11 @@ class HoundRuntime:
         self.stats = StatsService(self.database, self.pipeline_status)
 
         self.ingest_token: str | None = None
+        self._ingest_lock = threading.Lock()
+        self._ingest_counts: dict[str, int] = dict.fromkeys(
+            ("accepted", "unauthorized", "invalid", "too_large", "events_accepted", "events_dropped"), 0
+        )
+        self._daemon_report: DaemonMetrics | None = None
         self._source: EventSource | None = None
         self._source_error: str | None = None
         self._started_at: datetime | None = None
@@ -144,10 +167,21 @@ class HoundRuntime:
         return None
 
     # ------------------------------------------------------------------ ingest / status
-    def ingest(self, events: Sequence[NetworkEvent]) -> tuple[int, int]:
+    def ingest(self, events: Sequence[NetworkEvent], report: DaemonReport | None = None) -> tuple[int, int]:
         """Queue externally supplied events (from a capture daemon). Returns (accepted, dropped)."""
         accepted = sum(1 for event in events if self.queue.offer(event))
-        return accepted, len(events) - accepted
+        dropped = len(events) - accepted
+        with self._ingest_lock:
+            self._ingest_counts["accepted"] += 1
+            self._ingest_counts["events_accepted"] += accepted
+            self._ingest_counts["events_dropped"] += dropped
+            if report is not None:
+                self._daemon_report = DaemonMetrics(**report.model_dump(), received_at=datetime.now(UTC))
+        return accepted, dropped
+
+    def record_ingest_rejection(self, reason: IngestRejection) -> None:
+        with self._ingest_lock:
+            self._ingest_counts[reason] += 1
 
     def pipeline_status(self) -> PipelineStatus:
         q = self.queue.stats()
@@ -180,4 +214,63 @@ class HoundRuntime:
             websocket_subscribers=self.broadcaster.subscriber_count,
             remote_ingest_enabled=self.ingest_token is not None,
             started_at=self._started_at,
+        )
+
+    def metrics(self) -> MetricsOut:
+        """Every loss point and the few performance numbers that drive decisions (ROADMAP §15)."""
+        status = self.pipeline_status()
+        q = self.queue.stats()
+        p = self.processor.stats()
+        latency = self.processor.latency()
+        with self._ingest_lock:
+            counts = dict(self._ingest_counts)
+            daemon = self._daemon_report
+        database_bytes, wal_bytes = self.database.file_sizes()
+        now = datetime.now(UTC)
+        daemon_queue = daemon.queue_dropped if daemon else None
+        daemon_delivery = daemon.events_forward_dropped if daemon else None
+        return MetricsOut(
+            generated_at=now,
+            uptime_seconds=round((now - self._started_at).total_seconds(), 1) if self._started_at else None,
+            loss=LossMetrics(
+                total_events_lost=(daemon_queue or 0) + (daemon_delivery or 0) + q.dropped + p.failed,
+                daemon_queue_full=daemon_queue,
+                daemon_delivery_failed=daemon_delivery,
+                server_queue_full=q.dropped,
+                processing_failed=p.failed,
+                daemon_reported=daemon is not None,
+            ),
+            capture=CaptureMetrics(
+                source=status.source, packets_parsed=status.packets_parsed, packets_malformed=status.packets_malformed
+            ),
+            daemon=daemon,
+            ingest=IngestMetrics(
+                requests_accepted=counts["accepted"],
+                requests_unauthorized=counts["unauthorized"],
+                requests_invalid=counts["invalid"],
+                requests_too_large=counts["too_large"],
+                events_accepted=counts["events_accepted"],
+                events_dropped=counts["events_dropped"],
+            ),
+            queue=QueueMetrics(
+                size=q.size, capacity=q.capacity, high_water=q.high_water, received=q.received, dropped=q.dropped
+            ),
+            processing=ProcessingMetrics(
+                batches=p.batches,
+                processed=p.processed,
+                failed=p.failed,
+                responses_observed=p.responses_observed,
+                batch_latency=LatencyMetrics(
+                    samples=latency.samples, p50_ms=latency.p50_ms, p95_ms=latency.p95_ms, max_ms=latency.max_ms
+                ),
+            ),
+            websocket=WebSocketMetrics(
+                subscribers=self.broadcaster.subscriber_count, messages_dropped=self.broadcaster.dropped
+            ),
+            storage=StorageMetrics(
+                database_bytes=database_bytes,
+                wal_bytes=wal_bytes,
+                retention_limit=self.settings.retention_max_events,
+                retention_pruned_events=self.store.pruned_total,
+            ),
         )

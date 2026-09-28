@@ -70,6 +70,9 @@ class ForwarderStats:
 Transport = Callable[[str, bytes, dict[str, str], float], int]
 """``(url, body, headers, timeout) -> HTTP status``; injectable for tests."""
 
+Reporter = Callable[[], dict[str, object]]
+"""Returns the sender's cumulative counters, attached to every batch as ``daemon``."""
+
 
 # Talks to the local Hound API only, so proxy settings from the environment (or Windows'
 # system proxy) must never apply: a proxy would swallow or reject localhost traffic.
@@ -97,6 +100,7 @@ class HttpEventForwarder:
         timeout: float = 5.0,
         max_retries_per_batch: int = 5,
         transport: Transport = urllib_transport,
+        reporter: Reporter | None = None,
     ) -> None:
         parts = urlsplit(api_url)
         if parts.scheme not in ("http", "https") or not parts.netloc:
@@ -109,6 +113,7 @@ class HttpEventForwarder:
         self._timeout = timeout
         self._max_retries = max_retries_per_batch
         self._transport = transport
+        self._reporter = reporter
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.stats = ForwarderStats()
@@ -136,11 +141,15 @@ class HttpEventForwarder:
 
     def deliver(self, batch: list[NetworkEvent], retries: int | None = None) -> bool:
         """Send one batch with bounded retries. Returns ``True`` on success."""
-        body = json.dumps({"events": [event.model_dump(mode="json") for event in batch]}).encode("utf-8")
+        events = [event.model_dump(mode="json") for event in batch]
         headers = {"Content-Type": "application/json", TOKEN_HEADER: self._token}
         backoff = 1.0
         attempts = retries if retries is not None else self._max_retries
         for attempt in range(1, attempts + 1):
+            payload: dict[str, object] = {"events": events}
+            if self._reporter is not None:
+                payload["daemon"] = self._reporter()  # fresh counters on every attempt
+            body = json.dumps(payload).encode("utf-8")
             try:
                 status = self._transport(self._url, body, headers, self._timeout)
             except (urllib.error.URLError, OSError, TimeoutError) as exc:

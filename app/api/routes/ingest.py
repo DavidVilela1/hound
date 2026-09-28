@@ -49,14 +49,20 @@ async def _read_limited_body(request: Request) -> bytes:
 )
 async def ingest_events(request: Request, runtime: RuntimeDep) -> IngestResponse:
     if not tokens_match(request.headers.get(TOKEN_HEADER), runtime.ingest_token):
+        runtime.record_ingest_rejection("unauthorized")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing ingest token")
-    body = await _read_limited_body(request)
+    try:
+        body = await _read_limited_body(request)
+    except HTTPException:
+        runtime.record_ingest_rejection("too_large")
+        raise
     try:
         payload = IngestRequest.model_validate_json(body)
     except ValidationError as exc:
+        runtime.record_ingest_rejection("invalid")
         raise HTTPException(
             status_code=422,
             detail=exc.errors(include_url=False, include_context=False, include_input=False),
         ) from None
-    accepted, dropped = runtime.ingest(payload.events)
+    accepted, dropped = runtime.ingest(payload.events, payload.daemon)
     return IngestResponse(accepted=accepted, dropped=dropped)

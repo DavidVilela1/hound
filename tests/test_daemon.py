@@ -217,6 +217,13 @@ def test_split_mode_delivers_events_end_to_end(settings: Settings, live_server: 
     assert run.daemon._forwarder.stats.sent == EXPECTED_EVENTS
     assert FakeCapture.instances[0].state == "stopped"
 
+    metrics = live_server.runtime.metrics()  # the daemon's own counters reached the server
+    assert metrics.daemon is not None and metrics.loss.daemon_reported
+    assert metrics.daemon.packets_parsed >= EXPECTED_EVENTS
+    assert metrics.daemon.queue_capacity == settings.queue_max_size
+    assert metrics.loss.total_events_lost == 0
+    assert metrics.ingest.events_accepted == EXPECTED_EVENTS
+
 
 def test_capture_start_failure_exits_2(settings: Settings, live_server: LiveServer) -> None:
     FakeCapture.fail_on_start = "Permission denied opening interface 'fake0'"

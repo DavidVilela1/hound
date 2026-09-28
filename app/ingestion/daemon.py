@@ -48,6 +48,7 @@ class CaptureDaemon:
             token=token,
             batch_size=settings.batch_size,
             flush_interval=settings.flush_interval_seconds,
+            reporter=self._report,
         )
         self._api_url = api_url
         self._stop = threading.Event()
@@ -56,6 +57,23 @@ class CaptureDaemon:
         if self._self_traffic.excludes(event):
             return False  # our own forwarding connection, not network activity
         return self._queue.offer(event)
+
+    def _report(self) -> dict[str, object]:
+        """Cumulative counters sent to the server with each batch (``DaemonReport``)."""
+        status = self._capture.status()
+        q = self._queue.stats()
+        f = self._forwarder.stats
+        return {
+            "interface": status.interface,
+            "packets_parsed": status.packets_parsed,
+            "packets_malformed": status.packets_malformed,
+            "queue_dropped": q.dropped,
+            "queue_high_water": q.high_water,
+            "queue_capacity": q.capacity,
+            "events_forwarded": f.sent,
+            "events_forward_dropped": f.dropped,
+            "forward_failures": f.failures,
+        }
 
     def stop(self) -> None:
         """Ask :meth:`run` to finish (thread-safe; used by signal handlers and embedders)."""

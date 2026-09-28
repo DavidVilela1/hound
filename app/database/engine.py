@@ -112,6 +112,19 @@ class Database:
             except PermissionError:
                 logger.warning("Could not restrict database file permissions", extra={"path": str(path)})
 
+    def file_sizes(self) -> tuple[int | None, int | None]:
+        """Bytes used by the SQLite file and its write-ahead log; ``None`` when not applicable."""
+        if self._sqlite_path is None:
+            return None, None
+
+        def size(path: Path) -> int | None:
+            try:
+                return path.stat().st_size
+            except OSError:
+                return None
+
+        return size(self._sqlite_path), size(Path(f"{self._sqlite_path}-wal"))
+
     def describe(self) -> str:
         """Safe, credential-free description for logs."""
         return str(self._sqlite_path) if self._sqlite_path else make_url(self.url).render_as_string()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -155,14 +155,123 @@ class HealthOut(BaseModel):
     pipeline: PipelineStatus
 
 
+Counter = Annotated[int, Field(ge=0, le=10**15)]
+
+
+class DaemonReport(BaseModel):
+    """Cumulative counters of a capture daemon since it started, sent with each batch.
+
+    Values are as of the moment that batch was sent, so ``events_forwarded`` does not yet
+    include the batch carrying the report.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    interface: str | None = Field(default=None, max_length=256)
+    packets_parsed: Counter = 0
+    packets_malformed: Counter = 0
+    queue_dropped: Counter = Field(default=0, description="Events lost because the daemon's queue was full.")
+    queue_high_water: Counter = 0
+    queue_capacity: Counter = 0
+    events_forwarded: Counter = 0
+    events_forward_dropped: Counter = Field(
+        default=0, description="Events in batches the daemon gave up delivering (API down, rejected)."
+    )
+    forward_failures: Counter = Field(default=0, description="Failed delivery attempts, including retries.")
+
+
 class IngestRequest(BaseModel):
     """Batch of normalised events forwarded by a capture daemon."""
 
     model_config = ConfigDict(extra="forbid")
 
     events: list[NetworkEvent] = Field(..., min_length=1, max_length=MAX_INGEST_BATCH)
+    daemon: DaemonReport | None = Field(default=None, description="The sending daemon's own counters (optional).")
 
 
 class IngestResponse(BaseModel):
     accepted: int
     dropped: int
+
+
+# ---------------------------------------------------------------------------- metrics
+class LossMetrics(BaseModel):
+    """Events lost per stage. ``None`` = that stage is not visible (no daemon report yet)."""
+
+    total_events_lost: int = Field(description="Sum of the visible stages below.")
+    daemon_queue_full: int | None
+    daemon_delivery_failed: int | None
+    server_queue_full: int
+    processing_failed: int = Field(description="Enrichment/scoring errors and failed database writes.")
+    daemon_reported: bool = Field(description="False until a capture daemon has sent counters.")
+
+
+class CaptureMetrics(BaseModel):
+    """The in-process event source (demo or all-in-one capture), if any."""
+
+    source: str | None
+    packets_parsed: int
+    packets_malformed: int
+
+
+class DaemonMetrics(DaemonReport):
+    received_at: datetime = Field(description="When the latest report arrived (with an event batch).")
+
+
+class IngestMetrics(BaseModel):
+    requests_accepted: int
+    requests_unauthorized: int
+    requests_invalid: int
+    requests_too_large: int
+    events_accepted: int
+    events_dropped: int = Field(description="Events refused because the server queue was full.")
+
+
+class QueueMetrics(BaseModel):
+    size: int
+    capacity: int
+    high_water: int
+    received: int
+    dropped: int
+
+
+class LatencyMetrics(BaseModel):
+    samples: int
+    p50_ms: float | None
+    p95_ms: float | None
+    max_ms: float | None
+
+
+class ProcessingMetrics(BaseModel):
+    batches: int
+    processed: int
+    failed: int
+    responses_observed: int = Field(description="DNS responses used for correlation (not stored).")
+    batch_latency: LatencyMetrics = Field(description="Most recent batches (up to 1000).")
+
+
+class WebSocketMetrics(BaseModel):
+    subscribers: int
+    messages_dropped: int = Field(description="Dropped for slow viewers only; stored events are unaffected.")
+
+
+class StorageMetrics(BaseModel):
+    database_bytes: int | None
+    wal_bytes: int | None
+    retention_limit: int
+    retention_pruned_events: int = Field(description="Oldest events deleted by the retention limit (by design).")
+
+
+class MetricsOut(BaseModel):
+    """Pipeline counters for answering "did we lose anything, and where?"."""
+
+    generated_at: datetime
+    uptime_seconds: float | None
+    loss: LossMetrics
+    capture: CaptureMetrics
+    daemon: DaemonMetrics | None
+    ingest: IngestMetrics
+    queue: QueueMetrics
+    processing: ProcessingMetrics
+    websocket: WebSocketMetrics
+    storage: StorageMetrics
