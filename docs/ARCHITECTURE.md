@@ -133,8 +133,10 @@ tested · extension points. File references are to the current code.
 * **Failure modes:** locked/unwritable DB (e.g. created by root), disk full, corrupted
   JSON columns (re-validated on read).
 * **Tests:** `tests/test_database.py`.
-* **Gap vs target:** schema created with `create_all` only — **no schema versioning or
-  migrations** (ADR-015, tracked as critical debt before any schema change).
+* **Schema versioning:** `PRAGMA user_version` + ordered atomic migrations in
+  `app/database/migrations.py` (ADR-018); legacy v1.0 databases are adopted; newer or
+  foreign databases are refused unchanged. Tests: `tests/test_migrations.py` (incl. a
+  guard that the migrated schema equals the ORM models).
 
 ### 3.8 API — `app/api/`
 * **Responsibility:** thin HTTP layer: validation, auth for ingest, JSON contracts.
@@ -213,9 +215,10 @@ Verified on 2026-09-28: every module imports standalone (no circular imports), a
 | Topic | Current | Target |
 |---|---|---|
 | Engine | SQLite, WAL, `synchronous=NORMAL`, `busy_timeout=5000` | unchanged |
-| Schema | `events`, `devices`; 7 + 2 indexes; `create_all` | **versioned schema** (`PRAGMA user_version` + ordered migration steps, ADR-015 follow-up) |
+| Schema | `events`, `devices`; 7 + 2 indexes; version 1 in `PRAGMA user_version`; ordered atomic migrations (ADR-018) | unchanged |
 | Retention | newest 250 000 events kept (checked every 50 batches) | plus device-row expiry and optional time-based retention |
 | Size | measured ≈ 390 B/event → ≈ 93 MiB at the default cap | documented sizing guidance |
+| File permissions | POSIX: data dir created `0700`, DB/WAL/SHM `0600`; Windows: profile ACLs | unchanged |
 | Backup | none | `hound db backup` using SQLite online backup API; export CSV/JSON |
 
 ### 5.3 Networking & capture
@@ -254,7 +257,7 @@ Detailed hardening plan: [`ROADMAP.md` §J](ROADMAP.md#j-security-roadmap).
 |---|---|
 | Real GeoIP | Only `build_geolocator()` knows implementations; everything else uses `GeoLocator`. |
 | TLS SNI / DHCP / ARP observations | New observation kinds are new `PacketType`s on `NetworkEvent`; do not add side channels around the queue. |
-| Device fingerprinting / MAC identity | Device key is `source_ip` today; do not spread that assumption beyond `DeviceRepository` and `DeviceOut`. Needs schema versioning first. |
+| Device fingerprinting / MAC identity | Device key is `source_ip` today; do not spread that assumption beyond `DeviceRepository` and `DeviceOut`. Schema changes go through a new migration (ADR-018). |
 | Configurable rules | Signals read thresholds/weights only from `RiskConfig`; no literals in signal code. |
 | Alerting | Hook after `SqlEventStore.save()` (same place as the publisher); never inside the capture callback. |
 | Multiple interfaces | Sources are independent `EventSource`s sharing one queue; the parser takes the interface name per packet. |

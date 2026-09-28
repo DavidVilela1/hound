@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (14.1 closed for Windows; next: 14.2).
+> Last reviewed: 2026-09-28 (14.2 done; next: 14.4, moved ahead of 14.3 — see 14.3).
 
 ---
 
@@ -132,7 +132,7 @@ Examples for upcoming work:
 | 0 Discovery & architecture | layered packages, ADRs | VERIFIED | `ARCHITECTURE.md`, `DECISIONS.md` |
 | 1 Foundation | `app/core`, `run.py`, CLI, `.env.example` | VERIFIED | `tests/test_config.py`, `tests/test_cli_and_security.py` |
 | 2 Domain/event model | `app/models` | VERIFIED | `tests/test_models.py` |
-| 3 Database | `app/database` | VERIFIED | `tests/test_database.py` — gap: no migrations (14.2) |
+| 3 Database | `app/database` | VERIFIED | `tests/test_database.py`, `tests/test_migrations.py` — versioned since 14.2 |
 | 4 Packet ingestion | `app/ingestion/{capture,parser,daemon,forwarder}` | VERIFIED (Linux) | unit tests + manual live capture; daemon 0 % automated coverage (14.4) |
 | 5 Processing pipeline | `app/services/{processing,store,runtime}` | VERIFIED | `tests/test_processing.py` |
 | 6 Enrichment | `app/enrichment` | VERIFIED | `tests/test_enrichment.py` |
@@ -184,7 +184,7 @@ and whose installs are reproducible.
   Residual: the CI workflow has not executed yet (no repository), so macOS is untested;
   Windows live capture is a separate manual check (M2).
 
-#### 14.2 Schema versioning & migrations ← **next task**
+#### 14.2 Schema versioning & migrations — **DONE**
 * **Tasks:** store schema version in `PRAGMA user_version`; `app/database/migrations.py`
   with ordered `(version, fn)` steps executed in a transaction at start-up; refuse to start
   (clear message) on a DB newer than the code; mark current schema as version 1.
@@ -192,15 +192,26 @@ and whose installs are reproducible.
   simulated v2 migration on a copy; "newer DB" refusal.
 * **Acceptance:** existing `data/hound.db` files keep working; ADR-015 superseded.
 * **Risk:** SQLite `ALTER TABLE` limits → use table-rebuild pattern inside a transaction.
+* **Outcome (2026-09-28):** `app/database/migrations.py` (ADR-018): frozen v1 baseline,
+  every database migrated through the same ordered steps, one `BEGIN IMMEDIATE`
+  transaction per step incl. the version bump; legacy adoption only on an exact structure
+  match; newer/foreign databases refused unchanged. Beyond the plan: a drift test (migrated
+  schema == ORM models), S-8 file permissions, and a CLI pre-flight so a refused database is
+  a one-line error instead of a ~60-line uvicorn traceback. Verified on a real database
+  created by the previous release (385 events, 6 devices preserved, mode 644 → 600).
+  16 new tests; each key behaviour mutation-checked (removing it makes a test fail).
 
 #### 14.3 Reproducible installs & release hygiene
+*Sequencing note (2026-09-28): moved after 14.4 because two of its items wait for owner
+decisions (license, version label); 14.4 is fully unblocked. Order within M6 is otherwise
+unaffected.*
 * **Tasks:** generated lock file (`requirements.lock` via `pip-compile` or `uv pip
   compile`, dev-only tool) used by CI; `CHANGELOG.md`; version policy (owner decision:
   keep 1.0.0 or re-label 0.9.0 until M6); **LICENSE** (owner decision); move `pytest` to
   an optional `[dev]` extra if the owner prefers a lean runtime install.
 * **Acceptance:** `pip install -r requirements.lock` reproduces CI's environment.
 
-#### 14.4 Automated coverage for the daemon and dashboard
+#### 14.4 Automated coverage for the daemon and dashboard ← **next task**
 * **Tasks:** move the smoke test into pytest (`-m e2e`, skipped by default or run in CI);
   test `CaptureDaemon` with a fake capture and a live test server (split mode without
   privileges); NiceGUI page test using NiceGUI's `User` testing fixture if compatible,
@@ -276,7 +287,7 @@ A task is **done** only when all apply:
                  E2E  (smoke test 12 checks; manual live capture; manual Playwright)
                /      \
         API tests        Integration
-     (26: test_api,     (20: database, processing, demo)
+     (26: test_api,     (36: database, migrations, processing, demo)
       test_frontend)
           /                      \
    Unit (163: config, netutils, models, parser, capture*, enrichment, risk, forwarder, cli)
@@ -297,8 +308,8 @@ non-DNS on port 53); scenario builders for multiple devices, repeated connection
 scan, host sweep (exist inline in `test_risk.py`); small `.pcap` fixtures generated from
 synthetic packets for replay tests (Phase 20).
 
-Current numbers (2026-09-28, after 14.1): 209 tests, 79 % line coverage; gaps: `frontend/dashboard.py`
-& `components.py` 0 %, `ingestion/daemon.py` 0 %, `cli.py` 51 %, `core/logging_config.py` 40 %.
+Current numbers (2026-09-28, after 14.2): 225 tests, 80 % line coverage (`migrations.py` 100 %); gaps: `frontend/dashboard.py`
+& `components.py` 0 %, `ingestion/daemon.py` 0 %, `cli.py` 66 %, `core/logging_config.py` 40 %.
 
 ---
 
@@ -345,7 +356,7 @@ batch latency, WS per-client drops, `/api/stats` latency.
 | S-5 | API | Rate limiting | Not needed on localhost; revisit with remote dashboard |
 | S-6 | Config | Ingest token file: `0600` on POSIX; Windows relies on profile ACLs — documented in README §12, plus a cloud-sync warning in §18 | Done (documented, 14.1) |
 | S-7 | API | Cap inbound WS frame size (clients never need to send) | Open (15) |
-| S-8 | Database | Create `data/` as `0700` and DB `0600` on POSIX (contains browsing metadata) | Open (14.2) |
+| S-8 | Database | New `data/` dir `0700`; DB, `-wal`, `-shm` tightened to `0600` on POSIX (browsing metadata); pre-existing dirs untouched | Done (14.2) |
 | S-9 | Database | Bound parameters only; LIKE escaping; retention | Done |
 | S-10 | Dependencies | `pip-audit` job in CI (2026-09-28 local run: no known vulnerabilities); lock file still missing | Partly (lock file: 14.3) |
 | S-11 | Application | Domains logged only at DEBUG; review before adding new log lines | Done; keep |
@@ -370,7 +381,7 @@ batch latency, WS per-client drops, `/api/stats` latency.
 | Malformed packets | Certain | Low | parser never raises; counters | malformed rate spikes | inspect with DEBUG |
 | IPv6 SYNs missed | Certain with default filter | Medium | documented clause | IPv6-heavy network | Phase 20 |
 | Database growth | Certain over time | Medium | 250 k cap ≈ 93 MiB | disk warnings | lower cap |
-| Schema change breaks existing DBs | Certain without 14.2 | High | 14.2 before any schema change | any model/table edit | delete DB (data loss) |
+| Schema change breaks existing DBs | Unlikely since 14.2 | High | ordered atomic migrations; drift test vs ORM models | a model edit without a migration (test fails) | restore from backup (Phase 17) |
 | False positives erode trust | Likely | High | explainable reasons, Phase 16 tuning, allowlist | owner ignores dashboard | raise thresholds |
 | Encrypted DNS hides domains | Increasing | Medium | documented; SNI (Phase 20) | many `NO_PRIOR_DNS_LOOKUP` | accept limitation |
 | Dev-tool releases break CI (observed: mypy 2.x) | Likely over time | Low | ranges in `requirements-dev.txt`; fix forward | CI red with no code change | lock file (14.3) |

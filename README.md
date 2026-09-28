@@ -226,6 +226,13 @@ boundaries: the entry `example.com` matches `example.com`, `www.example.com`,
 `example.com.evil.net`. `www.` is not stripped, so an entry `www.example.com`
 does not block `example.com`.
 
+**Database and upgrades.** The SQLite database (`data/hound.db` by default) is created
+automatically and carries a schema version. When a newer Hound needs a different schema,
+it upgrades the file on start-up, one atomic step at a time, keeping your data. Databases
+created before versioning existed are recognised and adopted. Hound refuses to start —
+without touching the file — on a database written by a *newer* Hound, or on a file that
+isn't a Hound database. Back up `data/` before upgrading if the history matters to you.
+
 ## 9. Finding the network interface
 
 ```bash
@@ -487,6 +494,8 @@ client. `scripts/smoke_test.py` uses a temporary database and a free port.
 | `400 Invalid host header` | You bound to a LAN address: add it to `HOUND_ALLOWED_HOSTS`. |
 | `attempt to write a readonly database` after using sudo | Files in `data/` were created by root in all-in-one mode: `sudo chown -R "$USER" data/`. |
 | `database is locked` / sync conflicts in a OneDrive or Dropbox folder | Cloud sync is holding the SQLite files. Move the project, or set `HOUND_DATABASE_URL=sqlite:///C:/hound-data/hound.db` (any unsynced folder). |
+| `Cannot start: The database uses schema version N, but this version of Hound supports up to version M` | The file was upgraded by a newer Hound. Update Hound, or use another file: `HOUND_DATABASE_URL=sqlite:///data/other.db`. |
+| `Cannot start: The database file already contains tables that do not match any Hound schema` | `HOUND_DATABASE_URL` points at a file from another program (or a damaged one). Move it away or point Hound at a new file. Hound leaves it untouched. |
 | Port 8000 in use | `python run.py --port 8080` (and `--api-url http://127.0.0.1:8080` for the daemon). |
 | Many events dropped under load | Raise `HOUND_QUEUE_MAX_SIZE` or narrow the BPF filter. |
 
@@ -513,6 +522,7 @@ hound/
 │   │   └── security.py        # ingest token handling
 │   ├── database/
 │   │   ├── engine.py          # engine, sessions, SQLite pragmas, auto-init
+│   │   ├── migrations.py      # schema versioning: frozen baseline + ordered migrations
 │   │   ├── tables.py          # ORM schema + indexes
 │   │   └── repositories.py    # all SQL queries
 │   ├── enrichment/
@@ -598,7 +608,9 @@ hound/
   are logged, counted and surfaced in `/health` without stopping the pipeline;
   capture failures are reported in the UI.
 * **Privacy.** Per-event details (domains) are logged only at DEBUG level.
-  The database contains browsing metadata — protect `data/` accordingly.
+  The database contains browsing metadata — protect `data/` accordingly. On Linux and
+  macOS Hound creates a new `data/` directory as owner-only (`0700`) and restricts the
+  database files to `0600`; on Windows they inherit your profile folder's permissions.
   If the project sits in a cloud-synced folder (OneDrive, Dropbox, iCloud
   Drive), `data/` — the database and the ingest token — is uploaded too. Keep
   the project outside synced folders, or point `HOUND_DATABASE_URL` and

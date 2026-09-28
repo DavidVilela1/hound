@@ -23,9 +23,10 @@ change their status or add a "Revisited" note.
 | 012 | One Pydantic `NetworkEvent` as the contract for every source | Accepted |
 | 013 | DNS responses feed state but are not stored as events | Accepted |
 | 014 | Loopback de-duplication and self-traffic filtering in capture | Accepted |
-| 015 | Schema via `create_all`, no migrations yet | Accepted (debt) |
+| 015 | Schema via `create_all`, no migrations yet | Superseded by ADR-018 |
 | 016 | Stdlib-only HTTP forwarding in the privileged daemon | Accepted |
 | 017 | CI on GitHub Actions; dev tools in `requirements-dev.txt`, config in `pyproject.toml` | Accepted |
+| 018 | Versioned SQLite schema: frozen baseline + ordered atomic migrations | Accepted |
 
 ---
 
@@ -155,7 +156,7 @@ change their status or add a "Revisited" note.
   daemon ignores SYNs to the API's own address/port.
 * **Consequences:** heuristic; negligible cost off-loopback.
 
-## ADR-015 — Schema via `create_all`, no migrations (debt)
+## ADR-015 — Schema via `create_all`, no migrations (debt) — *superseded by ADR-018*
 * **Context:** first release, no existing user data to migrate.
 * **Chosen:** tables and indexes are created automatically; no versioning.
 * **Consequences / debt:** *any* column change would break existing `data/hound.db` files
@@ -186,3 +187,27 @@ change their status or add a "Revisited" note.
   observed when mypy 2.x flagged 5 issues that 1.x accepted. Mitigation: fix forward;
   the lock file (14.3) will make CI reproducible. Requires the project to be hosted on
   GitHub; until then the workflow is inert.
+
+## ADR-018 — Versioned SQLite schema: frozen baseline + ordered atomic migrations
+* **Context:** ADR-015's trigger fired — schema changes are coming (device identity, alerts)
+  and the owner now has real `data/hound.db` files that must survive upgrades.
+* **Options:** Alembic; keep `create_all` and add ad-hoc `ALTER`s; a small in-repo runner
+  on `PRAGMA user_version`.
+* **Chosen:** `app/database/migrations.py`. The version lives in `PRAGMA user_version`.
+  Version 1 is the frozen DDL Hound 1.0.0 created; later versions are appended
+  `Migration(n, description, apply)` steps. **Every** database (new or old) goes through
+  the same ordered steps — no `create_all` shortcut for SQLite — each in a
+  `BEGIN IMMEDIATE` transaction that also bumps the version, with the version read inside
+  the transaction (safe if two processes start together). Pre-versioning databases
+  (`user_version` 0 with tables) are adopted as v1 only if their structure matches the
+  baseline exactly; a database newer than the code, or a non-Hound file, is refused
+  without modification. A test asserts the migrated schema equals the ORM models, so
+  `tables.py` and the migrations cannot drift apart silently. The CLI checks the database
+  before starting the web server so refusals are a one-line message (exit code 2).
+* **Reason:** Alembic brings a dependency, a config directory and an autogenerate workflow
+  for two tables; SQLite's transactional DDL makes a ~240-line module (half of it the frozen DDL and docs) fully atomic.
+  Verified: DDL and `user_version` roll back together (SQLite 3.45).
+* **Consequences:** writing a migration is manual SQL (SQLite's limited `ALTER TABLE` means
+  a table rebuild for most column changes). Non-SQLite URLs still use `create_all` without
+  versioning (untested, ADR-003). On POSIX, the DB directory is created `0700` and the DB,
+  `-wal` and `-shm` files are tightened to `0600` (roadmap S-8).

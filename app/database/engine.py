@@ -1,9 +1,11 @@
-"""Database engine/session management and automatic schema initialisation."""
+"""Database engine/session management and automatic, versioned schema initialisation."""
 
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.database.migrations import MigrationResult, SchemaVersionError, migrate
 from app.database.tables import Base
 
 logger = logging.getLogger(__name__)
@@ -56,16 +59,58 @@ class Database:
         if self._is_sqlite:
             event.listen(self.engine, "connect", _sqlite_pragmas)
         self._session_factory = sessionmaker(self.engine, expire_on_commit=False)
+        self.schema_version: int | None = None  # set by initialize() for SQLite
+        self._ready_logged = False
 
     def initialize(self) -> None:
-        """Create the database file/directory and all tables if they do not exist."""
+        """Create the database if needed and bring its schema to the latest version.
+
+        SQLite databases are versioned and migrated (see :mod:`app.database.migrations`).
+        Other backends are untested; they get ``create_all`` without versioning.
+        """
         try:
             if self._sqlite_path is not None:
-                self._sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-            Base.metadata.create_all(self.engine)
-        except (OSError, SQLAlchemyError) as exc:
+                # 0o700 applies only if Hound creates the directory (POSIX; ignored on Windows).
+                self._sqlite_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if self._is_sqlite:
+                result = self._migrate()
+                self.schema_version = result.to_version
+                self._restrict_file_permissions()
+            else:
+                logger.warning("Schema versioning is only implemented for SQLite; using create_all")
+                Base.metadata.create_all(self.engine)
+        except SchemaVersionError as exc:
+            raise DatabaseError(f"{exc} (database: {self.describe()})") from exc
+        except (OSError, SQLAlchemyError, sqlite3.Error) as exc:
             raise DatabaseError(f"Could not initialise database: {exc}") from exc
-        logger.info("Database ready", extra={"database": self.describe()})
+        if not self._ready_logged:
+            logger.info("Database ready", extra={"database": self.describe(), "schema_version": self.schema_version})
+            self._ready_logged = True
+
+    def _migrate(self) -> MigrationResult:
+        raw = self.engine.raw_connection()
+        try:
+            connection = raw.driver_connection
+            if not isinstance(connection, sqlite3.Connection):  # pragma: no cover - other SQLite drivers
+                raise DatabaseError("Schema migrations require the standard sqlite3 driver")
+            return migrate(connection)
+        finally:
+            raw.close()
+
+    def _restrict_file_permissions(self) -> None:
+        """Make the database readable by its owner only (POSIX). It holds browsing metadata."""
+        if os.name != "posix" or self._sqlite_path is None:
+            return
+        for path in (self._sqlite_path, Path(f"{self._sqlite_path}-wal"), Path(f"{self._sqlite_path}-shm")):
+            try:
+                mode = stat.S_IMODE(path.stat().st_mode)
+                if mode & 0o077:
+                    path.chmod(0o600)
+                    logger.info("Restricted database file permissions to owner only", extra={"path": str(path)})
+            except FileNotFoundError:
+                continue
+            except PermissionError:
+                logger.warning("Could not restrict database file permissions", extra={"path": str(path)})
 
     def describe(self) -> str:
         """Safe, credential-free description for logs."""
