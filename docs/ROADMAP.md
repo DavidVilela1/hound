@@ -318,8 +318,11 @@ M6 stays open until its exit criteria are met.*
 ### Phase 17 — Data lifecycle
 *Sequencing note (2026-09-29): 16d needs the owner's monitoring position; Phase 17 starts
 meanwhile. Slices: 17a `backup` command + verified restore — **DONE** (ADR-024) ·
-17b export (CSV/JSON) — **DONE** (ADR-027) · **17c device-row expiry + time-based
-retention ← next task** · 17d periodic `PRAGMA optimize`.*
+17b export (CSV/JSON) — **DONE** (ADR-027) · 17c device-row expiry + time-based
+retention — **DONE** (ADR-028) · **17d periodic `PRAGMA optimize` ← next task**.*
+* **17c outcome (2026-09-29):** `HOUND_RETENTION_DAYS`; device counters always equal the
+  stored events, devices without stored events are removed; retention also runs when
+  idle. Fixed a pre-existing bug: a failed prune marked a stored batch as lost.
 * **17b outcome (2026-09-29):** `GET /api/export/events` (all `/api/events` filters) and
   `GET /api/export/devices`, CSV or JSON, streamed in keyset pages (server memory flat
   at 250 k rows: 83 MiB; CSV ≈ 12 k rows/s, JSON ≈ 14 k rows/s), snapshot at request

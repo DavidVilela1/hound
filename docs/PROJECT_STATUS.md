@@ -5,18 +5,19 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (session 16: 17b export)
+Last updated:      2026-09-29 (session 17: 17c retention by age + device consistency)
 Current milestone: M7 — Field-validated (M0–M6 reached; M2 on Linux + Windows)
-Current phase:     Phase 17 — Data lifecycle (17a, 17b done; 17c next). Phase 16: 16e
-                   done; 16d field trial planned by the owner for the week of 2026-10-05
+Current phase:     Phase 17 — Data lifecycle (17a, 17b, 17c done; 17d next). Phase 16:
+                   16e done; 16d field trial planned by the owner for the week of 2026-10-05
 Current task:      none in progress
-Next task:         17c device-row expiry + time-based retention
-Overall state:     Hound 1.0.0 (MIT) + unreleased 16e, 17b: capture (split mode, Linux +
-                   Windows), enrichment, explainable risk with allowlist and a tunable,
-                   reloadable risk file, API, live dashboard with coverage line and
-                   downloads, CSV/JSON export, metrics, doctor, backup/restore, benchmark.
-                   Linux: 459 tests pass (Py 3.11 + 3.13, from the lock). Owner: Windows
-                   369 passed + 5 skipped (before the logging fix); CI green.
+Next task:         17d periodic PRAGMA optimize
+Overall state:     Hound 1.0.0 (MIT) + unreleased 16e, 17b, 17c: capture (split mode,
+                   Linux + Windows), enrichment, explainable risk with allowlist and a
+                   tunable, reloadable risk file, API, live dashboard with coverage line
+                   and downloads, CSV/JSON export, retention by count and age, metrics,
+                   doctor, backup/restore, benchmark. Linux: 479 tests pass (Py 3.11 +
+                   3.13, from the lock). Owner: Windows 369 passed + 5 skipped (before
+                   the logging fix); CI green.
 ```
 
 ## 1. Baseline assessment
@@ -30,13 +31,13 @@ Ingestion       VERIFIED*       Parser/capture/daemon/demo; live capture on Linu
                                 Daemon split mode tested end to end (96%); parser fuzzed
 Event model     VERIFIED        Frozen Pydantic NetworkEvent; used by all sources
 Backend         VERIFIED        Worker thread, retention, error isolation, broadcaster
-Database        VERIFIED        WAL, indexes, retention; schema v1 in PRAGMA user_version with
+Database        VERIFIED        WAL, indexes, retention by count + optional age (devices follow); schema v1 in PRAGMA user_version with
                                 ordered atomic migrations (ADR-018); owner-only files on POSIX
 Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS correlation
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        16 page-level tests against the real API (dashboard.py 96 %);
                                 visuals checked manually (coverage line: screenshots s15)
-Testing         VERIFIED*       459 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       479 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -51,6 +52,14 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-29 s17 | Baseline: `pytest`; no file newer than the last delivered zip | Linux, Py 3.11 | 459 passed |
+| 2026-09-29 s17 | **Bug reproduced before the fix**: `EventRepository.prune` made to raise "database is locked", 50 single-event batches | Py 3.11 | all 50 stored, yet `failed=1`, "Database write failed; batch dropped" logged (pruning ran inside `save()` after the commit) → pruning moved to worker housekeeping; regression test passes |
+| 2026-09-29 s17 | Test expectations for the age/count scenarios | Py 3.11 | two hand-computed expectations were wrong (a boundary event at exactly 7 days is kept; the count limit runs before the age limit) — corrected the tests, not the code, after re-deriving them |
+| 2026-09-29 s17 | Mutation check (12: prune back inside save, housekeeping unguarded, age limit ignored, empty devices kept, DNS / dangerous counters not decremented, worker never housekeeps, no prune at start, events and devices in two transactions, no clamping, pruned devices not counted, tally ignores risk level) — each under `timeout` | Py 3.11 | 12/12 caught; originals restored |
+| 2026-09-29 s17 | Prune cost on 250 k rows spanning 10 days, 30 devices | Py 3.11 | first 7-day prune: 75 001 rows in 464 ms; steady count prune of 999 rows: 28 ms; nothing to prune: 7 ms; afterwards Σ device `event_count` = stored rows (174 000) |
+| 2026-09-29 s17 | **Real server**: events 10, 9, 1 and 0 days old ingested over HTTP; restart with `HOUND_RETENTION_DAYS=7` | Linux | on start "Retention applied removed_events=2 removed_devices=1"; devices: `.10` 1 event (was 2), `.20` 1, `.30` gone; `/api/metrics` `retention_days` 7, pruned 2 events / 1 device; no WARNING/ERROR |
+| 2026-09-29 s17 | Real demo server at 200 events/s with `HOUND_RETENTION_MAX_EVENTS=1000`, `HOUND_RETENTION_DAYS=1` | Linux | processed 2 198 = stored 1 018 + pruned 1 180, loss 0; after stop, in SQLite: Σ device counts = 1 018 = stored events, 0 devices without events, 0 devices whose count differs from its events; 12 "Retention applied" lines, no WARNING/ERROR |
+| 2026-09-29 s17 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff check + format; mypy 2.3.1 linux/win32/darwin + 3.11 lock; compileall; smoke | Linux | 479 / 479 / 479 passed; clean; clean ×4; smoke all passed; `store.py` 98 %, `repositories.py` 99 %, `processing.py` 95 %; Py 3.13 ResourceWarnings in the new tests: 0 |
 | 2026-09-29 s16 | Baseline: `pytest`; ruff check + format (app tests scripts run.py); mypy | Linux, Py 3.11 | 419 passed; clean; clean |
 | 2026-09-29 s16 | Export endpoints by hand (TestClient) | Py 3.11 | CSV with BOM + `Content-Disposition`; an ingest-supplied interface `=cmd\|' /C calc'!A0` was **accepted by ingest** and came out as `'=cmd…` (formula neutralised); `format=xml` and `since > until` → 422 |
 | 2026-09-29 s16 | `/api/events` OpenAPI parameters after moving the filters into a shared dependency | Py 3.11 | same 12 parameters (now also a test) |
@@ -328,20 +337,29 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   40 new tests (`tests/test_export.py` 39, dashboard 1), mutation-checked; bounded
   memory measured on a real server.
 
+- **17c Retention by age + device consistency (session 17, ADR-028):**
+  `HOUND_RETENTION_DAYS` (1–3650, unset = off) besides the row limit. `EventRepository.prune`
+  tallies deleted rows per device (`PruneResult`); `DeviceRepository.forget` subtracts them
+  and deletes devices with no stored event left — one transaction. Retention runs from
+  `SqlEventStore.prune_if_due()` via the worker's `housekeep()` (start, every 50 batches,
+  every 5 min, also when idle), no longer inside `save()` — which fixed a pre-existing
+  bug where a failed prune reported a stored batch as lost. Metrics:
+  `storage.retention_days`, `retention_pruned_devices`. 20 new tests
+  (`tests/test_retention.py`), mutation-checked.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **17c Device-row expiry + time-based retention.** Today `devices` rows are never
-   removed and their counters stay lifetime totals after retention prunes their events;
-   retention is by row count only. Add an optional age limit for events
-   (`HOUND_RETENTION_DAYS`) and remove devices with no stored events left, applied with
-   the existing periodic prune; keep counters and the dashboard consistent. Unblocked.
+1. **17d Periodic `PRAGMA optimize`.** Run SQLite's `PRAGMA optimize` from the same
+   housekeeping hook (at start and e.g. hourly) so the query planner's statistics follow
+   the data as it grows and is pruned; measure the effect on `/api/stats` and the
+   coverage/export queries at 250 k rows before and after. Unblocked.
 2. 16d field trial + tuning (owner: week of 2026-10-05). Before starting: set
-   `HOUND_DEPLOYMENT_POSITION` in `.env`; check the dashboard's coverage line after
-   ~15 minutes; review flagged events with
+   `HOUND_DEPLOYMENT_POSITION` (and, if wanted, `HOUND_RETENTION_DAYS`) in `.env`; check
+   the coverage line after ~15 minutes; review flagged events with
    `/api/export/events?min_risk_level=suspicious` (CSV).
-3. Owner: re-run `pytest` (expect 450 passed, 5 skipped on Windows — 4 Linux-only
+3. Owner: re-run `pytest` (expect 470 passed, 5 skipped on Windows — 4 Linux-only
    folder-name cases are not generated and 5 POSIX file-mode tests are skipped) and
    `python scripts/benchmark.py` (peak memory should now show a number).
 4. Test debt: close the SQLite connections in `tests/test_migrations.py` helpers (§7).
@@ -362,10 +380,11 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   newest-versions CI job are the signals (both inert until the project is on GitHub).
 
 **Nice-to-have**
+- A first age prune after enabling `HOUND_RETENTION_DAYS` on a large database holds the
+  worker for up to ~0.5 s per 75 k rows (measured); the queue buffers meanwhile. Fine at
+  current sizes; chunk the delete only if a field trial shows queue pressure.
 - A device's risk resets only after its window expires *and* it sends a new event, so a
   silent device keeps its last level. The UI caption doesn't explain this; revisit in 16.
-- `devices` rows are never expired; counters are lifetime totals even after event
-  retention prunes old events → 17.
 - Backups accumulate in `data/backups/` (no rotation or pruning yet).
 - An export of 250 k rows occupies one API thread-pool worker for ~20 s; several at
   once would slow other requests. Fine for one local user; revisit only with evidence.
@@ -385,7 +404,7 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 - The dashboard's *Devices* tile counts every address in the device table; the coverage
   check counts only local IPv4 addresses from the last 24 h. Both are correct for what
   they say, but the two numbers can differ; the coverage dialog states its own basis.
-- The test suite now takes ~45–60 s here (459 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
+- The test suite now takes ~35–60 s here (479 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
   of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
 - The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,

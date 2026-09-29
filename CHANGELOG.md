@@ -7,6 +7,10 @@ All notable changes to Hound are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Age limit for stored events** (ADR-028): `HOUND_RETENTION_DAYS` deletes events older
+  than that many days, in addition to the row limit. Retention now also runs at start-up
+  and every 5 minutes, so an idle server applies it too. `GET /api/metrics` reports
+  `retention_days` and `retention_pruned_devices`.
 - **Export** (ADR-027): `GET /api/export/events` (every filter of `/api/events`) and
   `GET /api/export/devices` download all matching rows as CSV or JSON, oldest first,
   streamed in bounded memory. The CSV opens in Excel (UTF-8 with BOM) and cannot run
@@ -19,6 +23,16 @@ All notable changes to Hound are recorded here. The format follows
   against the last 24 h of traffic: e.g. a router position that has seen only one device
   is flagged with "check that the capture runs on the LAN side". With the position unset,
   Hound infers it ("most likely just the computer it runs on").
+
+### Changed
+- A device's counters now describe the events still stored (retention subtracts what it
+  deletes), and a device whose last stored event was deleted is removed.
+
+### Fixed
+- When deleting old events failed (e.g. the database was briefly locked), the batch that
+  had just been stored was reported as lost ("batch dropped", counted in the loss
+  metrics) and not shown live on the dashboard. Retention now runs separately from
+  storing a batch.
 
 ## [1.0.0] - 2026-09-29
 

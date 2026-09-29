@@ -7,11 +7,11 @@ parameters; user input is never interpolated into SQL text.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import Select, delete, func, select
+from sqlalchemy import ColumnElement, Select, delete, exists, func, select
 from sqlalchemy.orm import Session
 
 from app.database.tables import DeviceRecord, EventRecord
@@ -41,6 +41,36 @@ class EventFilter:
 
 
 DeviceSort = Literal["risk", "last_seen", "events", "first_seen"]
+
+
+@dataclass(slots=True)
+class RemovedEvents:
+    """Stored events of one device that retention deleted, by the counters they fed."""
+
+    events: int = 0
+    dns_queries: int = 0
+    connection_attempts: int = 0
+    suspicious: int = 0
+    dangerous: int = 0
+
+
+@dataclass(slots=True)
+class PruneResult:
+    events: int = 0
+    devices_removed: int = 0
+    by_device: dict[str, RemovedEvents] = field(default_factory=dict)
+
+    def add(self, ip: str, packet_type: str, risk_level: str, count: int) -> None:
+        removed = self.by_device.setdefault(ip, RemovedEvents())
+        removed.events += count
+        if packet_type == PacketType.DNS_QUERY.value:
+            removed.dns_queries += count
+        elif packet_type == PacketType.TCP_SYN.value:
+            removed.connection_attempts += count
+        if risk_level == RiskLevel.SUSPICIOUS.value:
+            removed.suspicious += count
+        elif risk_level == RiskLevel.DANGEROUS.value:
+            removed.dangerous += count
 
 
 class EventRepository:
@@ -76,15 +106,34 @@ class EventRepository:
             blocklist_match=enrichment.blocklist_match,
         )
 
-    def prune(self, max_events: int) -> int:
-        """Delete the oldest events so that at most ``max_events`` remain."""
+    def prune(self, max_events: int, older_than: datetime | None = None) -> PruneResult:
+        """Delete the oldest events beyond ``max_events``, and every event before ``older_than``.
+
+        Returns how many were deleted, per source device, so the caller can keep the
+        device aggregates equal to what is still stored (same transaction).
+        """
+        result = PruneResult()
         cutoff = self._session.scalar(
             select(EventRecord.id).order_by(EventRecord.id.desc()).offset(max_events).limit(1)
         )
-        if cutoff is None:
-            return 0
-        result = self._session.execute(delete(EventRecord).where(EventRecord.id <= cutoff))
-        return int(result.rowcount or 0)  # type: ignore[attr-defined]
+        if cutoff is not None:
+            self._delete_where(EventRecord.id <= cutoff, result)
+        if older_than is not None:
+            self._delete_where(EventRecord.timestamp < older_than, result)
+        return result
+
+    def _delete_where(self, condition: ColumnElement[bool], result: PruneResult) -> None:
+        # Tally what is about to go (one grouped query; cost grows with the rows deleted,
+        # not with the table), then delete it.
+        rows = self._session.execute(
+            select(EventRecord.source_ip, EventRecord.packet_type, EventRecord.risk_level, func.count())
+            .where(condition)
+            .group_by(EventRecord.source_ip, EventRecord.packet_type, EventRecord.risk_level)
+        ).all()
+        for ip, packet_type, risk_level, count in rows:
+            result.add(str(ip), str(packet_type), str(risk_level), int(count))
+        deleted = self._session.execute(delete(EventRecord).where(condition))
+        result.events += int(deleted.rowcount or 0)  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------ reads
     def get(self, event_id: int) -> EventRecord | None:
@@ -292,6 +341,31 @@ class DeviceRepository:
 
     def count(self) -> int:
         return int(self._session.scalar(select(func.count(DeviceRecord.id))) or 0)
+
+    def forget(self, result: PruneResult) -> int:
+        """Subtract pruned events from their devices; delete devices with no stored event left.
+
+        After this, a device's counters describe the events that are still stored (what the
+        API, the dashboard and exports can show). ``first_seen``/``last_seen`` stay as
+        observed while the device has stored events.
+        """
+        if not result.by_device:
+            return 0
+        devices = self._session.scalars(select(DeviceRecord).where(DeviceRecord.source_ip.in_(list(result.by_device))))
+        removed = 0
+        for device in devices:
+            if not self._session.scalar(select(exists().where(EventRecord.source_ip == device.source_ip))):
+                self._session.delete(device)
+                removed += 1
+                continue
+            gone = result.by_device[device.source_ip]
+            device.event_count = max(0, device.event_count - gone.events)
+            device.dns_query_count = max(0, device.dns_query_count - gone.dns_queries)
+            device.connection_attempt_count = max(0, device.connection_attempt_count - gone.connection_attempts)
+            device.suspicious_event_count = max(0, device.suspicious_event_count - gone.suspicious)
+            device.dangerous_event_count = max(0, device.dangerous_event_count - gone.dangerous)
+        result.devices_removed = removed
+        return removed
 
     def max_id(self) -> int:
         return int(self._session.scalar(select(func.max(DeviceRecord.id))) or 0)

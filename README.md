@@ -128,7 +128,7 @@ oldest messages. No component busy-waits or polls the database for new events.
 * Local blocklist with parent-domain matching (plain, `*.wildcard` and hosts-file formats).
 * Pluggable geolocation (`GeoLocator` protocol); default is **simulated**.
 * Transparent, deterministic risk engine with 13 documented signals.
-* SQLite storage with indexes, automatic schema creation and a retention limit.
+* SQLite storage with indexes, automatic schema creation and retention (a row limit, plus an optional age limit).
 * FastAPI REST API with pagination/filtering, OpenAPI docs at `/docs` and `/redoc`.
 * WebSocket live feed; NiceGUI dashboard with overview, live feed, devices,
   country statistics and event/device detail views.
@@ -213,12 +213,14 @@ silently change the bind address):
 | `BPF_FILTER` | `HOUND_BPF_FILTER` | `udp port 53 or tcp port 53 or (tcp[tcpflags] & tcp-syn != 0)` |
 | `DEPLOYMENT_POSITION` | `HOUND_DEPLOYMENT_POSITION` | `auto` — where Hound captures: `this_computer`, `gateway`, `mirror`, `dns_server` (§9) |
 | `BLOCKLIST_PATH` | `HOUND_BLOCKLIST_PATH` | `config/blocklist.txt` |
+| `RETENTION_MAX_EVENTS` | `HOUND_RETENTION_MAX_EVENTS` | `250000` — the oldest events beyond this are deleted |
+| `RETENTION_DAYS` | `HOUND_RETENTION_DAYS` | unset — also delete events older than this many days (1–3650) |
 | `LOG_LEVEL` | `HOUND_LOG_LEVEL` | `INFO` |
 
 Other useful settings (full list with comments in `.env.example`):
 `HOUND_ALLOWED_HOSTS`, `HOUND_API_URL`, `HOUND_INGEST_TOKEN`,
 `HOUND_ALLOWLIST_PATH`, `HOUND_GEO_MODE` (`simulated` | `mapping_only`), `HOUND_GEO_RANGES_PATH`,
-`HOUND_TRUSTED_DNS_SERVERS`, `HOUND_RETENTION_MAX_EVENTS`,
+`HOUND_TRUSTED_DNS_SERVERS`,
 `HOUND_QUEUE_MAX_SIZE`, `HOUND_LOG_FORMAT` (`text` | `json`),
 `HOUND_RISK_CONFIG_PATH` and the `HOUND_RISK_*` thresholds (see *Risk settings*
 below). Relative paths are resolved against the project
@@ -289,6 +291,17 @@ it upgrades the file on start-up, one atomic step at a time, keeping your data. 
 created before versioning existed are recognised and adopted. Hound refuses to start —
 without touching the file — on a database written by a *newer* Hound, or on a file that
 isn't a Hound database.
+
+**How long data is kept.** Hound keeps the newest `HOUND_RETENTION_MAX_EVENTS`
+events (250 000 by default) and, if you set `HOUND_RETENTION_DAYS`, deletes
+events older than that many days too — a good idea for a monitor that records
+your household's browsing (e.g. `HOUND_RETENTION_DAYS=30`). Retention runs at
+start-up, every 50 batches and every 5 minutes, also while no traffic arrives.
+A device's counters always describe the events still stored, and a device whose
+last event was deleted disappears from the device list (if it shows up again it
+starts afresh). Deleted events are counted in `GET /api/metrics`
+(`storage.retention_pruned_events`, `retention_pruned_devices`) and are not
+data loss. Take a backup first if you want to keep the history.
 
 **Backups.** `python run.py backup` writes a consistent copy of the database to
 `data/backups/hound-<date>-<time>.db` (or the path you give), and it is safe to
@@ -823,7 +836,7 @@ hound/
   when read. No `pickle`/`eval`.
 * **Bounded memory.** Event queue, per-client WebSocket queues, DNS cache,
   behaviour tracker and the dashboard feed are all size-limited; the database
-  has a retention limit.
+  has a row limit and an optional age limit (`HOUND_RETENTION_DAYS`).
 * **Robustness.** Malformed packets are counted and skipped; database errors
   are logged, counted and surfaced in `/health` without stopping the pipeline;
   capture failures are reported in the UI.

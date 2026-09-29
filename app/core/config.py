@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     # --- Storage ----------------------------------------------------------
     database_url: str = "sqlite:///data/hound.db"
     retention_max_events: int = Field(default=250_000, ge=1_000, le=50_000_000)
+    retention_days: int | None = Field(
+        default=None, ge=1, le=3_650, description="Also delete events older than this many days (unset: no age limit)."
+    )
 
     # --- Capture ----------------------------------------------------------
     network_interface: str | None = None
@@ -161,7 +164,7 @@ class Settings(BaseSettings):
             return text or DeploymentPosition.AUTO.value
         return value
 
-    @field_validator("ingest_token", "demo_seed", mode="before")
+    @field_validator("ingest_token", "demo_seed", "retention_days", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value

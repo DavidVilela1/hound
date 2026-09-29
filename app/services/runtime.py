@@ -97,6 +97,7 @@ class HoundRuntime:
             self.database,
             device_risk_window=timedelta(minutes=settings.device_risk_window_minutes),
             retention_max_events=settings.retention_max_events,
+            retention_days=settings.retention_days,
         )
         self.processor = ProcessingService(
             self.queue,
@@ -106,6 +107,7 @@ class HoundRuntime:
             publisher=self.broadcaster.publish,
             batch_size=settings.batch_size,
             flush_interval=settings.flush_interval_seconds,
+            housekeeping=self.store.prune_if_due,
         )
         self.events = EventQueryService(self.database, geo_simulated=settings.geo_mode == "simulated")
         self.devices = DeviceQueryService(self.database)
@@ -312,6 +314,8 @@ class HoundRuntime:
                 database_bytes=database_bytes,
                 wal_bytes=wal_bytes,
                 retention_limit=self.settings.retention_max_events,
+                retention_days=self.settings.retention_days,
                 retention_pruned_events=self.store.pruned_total,
+                retention_pruned_devices=self.store.pruned_devices_total,
             ),
         )

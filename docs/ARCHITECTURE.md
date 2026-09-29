@@ -145,7 +145,16 @@ tested · extension points. File references are to the current code.
 * **Depends on:** SQLAlchemy 2, SQLite (WAL, `busy_timeout`).
 * **Failure modes:** locked/unwritable DB (e.g. created by root), disk full, corrupted
   JSON columns (re-validated on read).
-* **Tests:** `tests/test_database.py`.
+* **Retention (ADR-028):** `SqlEventStore.prune()` deletes events beyond
+  `HOUND_RETENTION_MAX_EVENTS` (by id) and, optionally, older than `HOUND_RETENTION_DAYS`
+  (by timestamp); it first tallies what it deletes per device (`PruneResult`), then
+  `DeviceRepository.forget()` subtracts that from the device counters and deletes devices
+  with no stored event left — all in one transaction, so counters always equal the stored
+  events. It runs from `prune_if_due()`, which the processing worker calls between batches
+  and while idle (at start, every 50 batches, every 5 minutes), under the batch lock;
+  never inside `save()`. Costs measured at 250 k rows: 1 000 rows ≈ 28 ms; a first
+  age prune of 75 000 rows ≈ 0.46 s (the queue buffers meanwhile).
+* **Tests:** `tests/test_database.py`, `tests/test_retention.py`.
 * **Schema versioning:** `PRAGMA user_version` + ordered atomic migrations in
   `app/database/migrations.py` (ADR-018); legacy v1.0 databases are adopted; newer or
   foreign databases are refused unchanged. Tests: `tests/test_migrations.py` (incl. a
@@ -294,7 +303,7 @@ Verified on 2026-09-28: every module imports standalone (no circular imports), a
 |---|---|---|
 | Engine | SQLite, WAL, `synchronous=NORMAL`, `busy_timeout=5000` | unchanged |
 | Schema | `events`, `devices`; 7 + 2 indexes; version 1 in `PRAGMA user_version`; ordered atomic migrations (ADR-018) | unchanged |
-| Retention | newest 250 000 events kept (checked every 50 batches) | plus device-row expiry and optional time-based retention |
+| Retention | newest 250 000 events kept, plus optional age limit (`HOUND_RETENTION_DAYS`); device counters follow; checked at start, every 50 batches and every 5 min | unchanged |
 | Size | measured ≈ 390 B/event → ≈ 93 MiB at the default cap | documented sizing guidance |
 | File permissions | POSIX: data dir created `0700`, DB/WAL/SHM `0600`; Windows: profile ACLs | unchanged |
 | Backup | none | `hound db backup` using SQLite online backup API; export CSV/JSON |

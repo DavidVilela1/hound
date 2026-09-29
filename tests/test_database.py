@@ -184,8 +184,8 @@ def test_persistence_across_reopen(tmp_path: Path, make_event: EventFactory) -> 
 def test_prune_keeps_newest(database: Database, make_event: EventFactory) -> None:
     save(database, sample_events(make_event))
     with database.session() as s:
-        assert EventRepository(s).prune(4) == 7
+        assert EventRepository(s).prune(4).events == 7
     with database.session() as s:
         rows, total = EventRepository(s).list_page(EventFilter(), limit=10, offset=0)
         assert total == 4 and min(r.id for r in rows) == 8
-        assert EventRepository(s).prune(100) == 0
+        assert EventRepository(s).prune(100).events == 0

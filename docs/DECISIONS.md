@@ -454,3 +454,30 @@ change their status or add a "Revisited" note.
 * **Consequences:** an export of 250 k rows keeps one thread-pool worker busy ~20 s;
   a CSV cut off by a mid-export database error is not self-evidently incomplete (only
   the server log says so). Both accepted for a local, single-user tool.
+
+## ADR-028 — Retention by count and age; device rows describe what is stored
+* **Context:** events were limited by count only, checked every 50 batches — an idle
+  server never pruned; `devices` rows were never removed and kept lifetime counters, so
+  a device could show "5 000 events" with none left to inspect or export. A household
+  monitor records browsing metadata, so an age limit is also a privacy control.
+* **Chosen (17c, 2026-09-29):**
+  * optional `HOUND_RETENTION_DAYS` (1–3650, unset = off) in addition to
+    `HOUND_RETENTION_MAX_EVENTS`;
+  * pruning tallies the deleted rows per device (grouped by type and level) and
+    subtracts them from the device counters in the same transaction; a device with no
+    stored event left is deleted (checked with an indexed `EXISTS`, not by trusting the
+    counter; counters are clamped at 0 for databases whose counters had drifted).
+    `first_seen`/`last_seen` are kept as observed — they are history, and recomputing
+    them would cost a query per device;
+  * pruning runs from the worker between batches and on a timer (start, 50 batches,
+    5 min), not from `save()`.
+* **Bug found and fixed on the way:** `save()` pruned after committing the batch, inside
+  the worker's error handling — a failed prune (e.g. "database is locked") marked the
+  already stored batch as failed, logged "batch dropped", added it to the loss metrics
+  and skipped publishing it to the dashboard. Reproduced before the fix (50 stored, 1
+  counted failed); regression test added.
+* **Rejected:** recomputing device counters from the events table after each prune (cost
+  grows with the table, not with what is deleted); keeping lifetime counters (they
+  disagree with every view of the stored data).
+* **Consequences:** a device that returns after being forgotten starts a new row; risk
+  observations of a device are not trimmed (they are windowed already).

@@ -80,6 +80,7 @@ class ProcessingService:
         publisher: Publisher | None = None,
         batch_size: int = 200,
         flush_interval: float = 0.5,
+        housekeeping: Callable[[], object] | None = None,
     ) -> None:
         self._queue = queue
         self._enrichment = enrichment
@@ -88,6 +89,7 @@ class ProcessingService:
         self._publisher = publisher
         self._batch_size = batch_size
         self._flush_interval = flush_interval
+        self._housekeeping = housekeeping
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -119,10 +121,25 @@ class ProcessingService:
             batch = self._queue.get_batch(self._batch_size, self._flush_interval)
             if batch:
                 self.process_batch(batch)
+            self.housekeep()
         # Drain what is already queued so a clean shutdown loses nothing.
         while batch := self._queue.get_batch(self._batch_size, 0):
             self.process_batch(batch)
         logger.info("Processing worker stopped")
+
+    def housekeep(self) -> None:
+        """Run maintenance (retention) between batches; a failure is logged, never fatal.
+
+        Kept apart from storing a batch: a batch that was committed is never reported as
+        lost because maintenance failed afterwards.
+        """
+        if self._housekeeping is None:
+            return
+        try:
+            with self._batch_lock:
+                self._housekeeping()
+        except Exception:
+            logger.exception("Maintenance (retention) failed; will retry later")
 
     # ------------------------------------------------------------------ processing
     def process_batch(self, events: Sequence[NetworkEvent]) -> list[EventOut]:

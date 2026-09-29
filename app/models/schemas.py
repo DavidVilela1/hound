@@ -273,7 +273,11 @@ class StorageMetrics(BaseModel):
     database_bytes: int | None
     wal_bytes: int | None
     retention_limit: int
-    retention_pruned_events: int = Field(description="Oldest events deleted by the retention limit (by design).")
+    retention_days: int | None = Field(default=None, description="Age limit for events, if set.")
+    retention_pruned_events: int = Field(description="Events deleted by the count or age limit (by design, not loss).")
+    retention_pruned_devices: int = Field(
+        default=0, description="Devices deleted because retention removed their last stored event."
+    )
 
 
 class MetricsOut(BaseModel):
