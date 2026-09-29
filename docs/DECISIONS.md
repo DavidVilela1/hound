@@ -32,6 +32,7 @@ change their status or add a "Revisited" note.
 | 021 | Allowlist: suppressed indicators stay visible; device entries never hide blocklist hits | Accepted |
 | 022 | Risk settings in a strict TOML file; explicitly set environment values override it | Accepted |
 | 023 | Reload detection settings via a token-protected endpoint; all-or-nothing swap between batches, learned state kept | Accepted |
+| 024 | Backups via SQLite's online backup API; restore validates and moves the current database aside | Accepted |
 
 ---
 
@@ -346,3 +347,34 @@ change their status or add a "Revisited" note.
   events). A missing blocklist or allowlist file on reload is not an error (same as at
   start-up); the response shows the entry counts, so an accidentally emptied blocklist is
   visible. Stored events are not rescored.
+
+## ADR-024 — Backup with SQLite's online backup API; restore never deletes
+* **Context:** the owner will run Hound for weeks (field trial) and upgrade it; the only
+  advice was "copy `data/`", which is wrong while the server runs in WAL mode (recent
+  commits live in `hound.db-wal`) and leaves permissions to chance.
+* **Options:** manual file copy; `VACUUM INTO` (also consistent, and compacts — a valid
+  alternative, not evaluated further); the backup API (`sqlite3.Connection.backup`, the
+  documented mechanism for online copies and directly exposed by Python); an HTTP
+  endpoint vs. CLI commands.
+* **Chosen:** CLI `backup [PATH]` → `create_backup()` with the backup API in one step (a
+  consistent snapshot while the server keeps writing); destination created with
+  `O_EXCL` + mode 0600 before any data lands, parent directory 0700, then
+  `journal_mode=DELETE` so the backup is one file, and `PRAGMA integrity_check` must
+  return `ok` (the copy is deleted otherwise). Existing files are never overwritten.
+  CLI `restore BACKUP` → refuses if a Hound answers on the configured port; validates the
+  backup read-only (integrity, not newer, a Hound schema, not empty); moves the current
+  database plus `-wal`/`-shm` aside with a timestamp (never deletes); copies the backup
+  in (0600); rolls everything back if the copy fails. No HTTP endpoint: a backup is a
+  file on the owner's disk, and restore must not run while the server does.
+* **Reason:** consistent without stopping capture; private by construction; restore
+  cannot lose data, even when used by mistake.
+* **Consequences:** backups accumulate (no rotation yet); restore relies on the port
+  probe to detect a running server (a server on a different port is not detected —
+  on Windows the move then fails because the file is open, and everything is rolled
+  back). Found while building: SQLite creates `-wal`/`-shm` with the database file's
+  permissions — a note in ARCHITECTURE §3.11a claiming otherwise was corrected.
+* **Revisited (2026-09-29, owner's Windows run):** the first rollback deleted the file at
+  the database path whenever anything failed — including when the *move* of the original
+  failed, i.e. it could delete the live database (Linux; Windows was saved by its file
+  lock). The rollback now removes that file only after every original is aside and the
+  copy has started. Lesson recorded: a rollback must know which state it is undoing.

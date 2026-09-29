@@ -7,6 +7,8 @@ Commands (``serve`` is the default and may be omitted)::
     python run.py interfaces
     python run.py doctor [--interface IFACE]
     python run.py reload [--api-url URL]
+    python run.py backup [PATH]
+    python run.py restore BACKUP
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ import argparse
 import logging
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -25,7 +29,7 @@ from app.core.privileges import is_privileged as _is_privileged
 
 logger = logging.getLogger("hound")
 
-COMMANDS = ("serve", "capture", "interfaces", "doctor", "reload")
+COMMANDS = ("serve", "capture", "interfaces", "doctor", "reload", "backup", "restore")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Only monitor networks you own or are authorised to monitor.",
     )
     parser.add_argument("--version", action="version", version=f"hound {__version__}")
-    sub = parser.add_subparsers(dest="command", metavar="{serve,capture,interfaces,doctor,reload}")
+    sub = parser.add_subparsers(dest="command", metavar="{serve,capture,interfaces,doctor,reload,backup,restore}")
 
     serve = sub.add_parser("serve", help="Run the API and dashboard (default command).")
     source = serve.add_mutually_exclusive_group()
@@ -73,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         "reload", help="Apply edits to the blocklist, allowlist and risk settings in a running server."
     )
     reload.add_argument("--api-url", help="Hound server URL (default http://127.0.0.1:8000).")
+
+    backup = sub.add_parser("backup", help="Write a consistent copy of the database (safe while Hound runs).")
+    backup.add_argument("path", nargs="?", help="Where to write it (default: data/backups/hound-<time>.db).")
+
+    restore = sub.add_parser("restore", help="Replace the database with a backup (Hound must be stopped).")
+    restore.add_argument("backup", help="The backup file to restore.")
     return parser
 
 
@@ -225,6 +235,61 @@ def cmd_reload(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def _database_file(settings: Settings) -> Path | None:
+    from app.database.inspect import sqlite_path
+
+    path = sqlite_path(settings)
+    if path is None:
+        print("Backup and restore work with a local SQLite database only.", file=sys.stderr)
+    return path
+
+
+def cmd_backup(args: argparse.Namespace, settings: Settings) -> int:
+    from app.database.backup import BackupError, create_backup, default_backup_path
+
+    database = _database_file(settings)
+    if database is None:
+        return 2
+    target = Path(args.path).expanduser() if args.path else default_backup_path(database, datetime.now(UTC))
+    try:
+        result = create_backup(database, target.resolve())
+    except BackupError as exc:
+        print(f"Backup failed: {exc}", file=sys.stderr)
+        return 2
+    print(
+        f"Backup written: {result.path} ({result.size_bytes / 2**20:.1f} MiB, "
+        f"{result.info.events or 0:,} events, schema v{result.info.version}, integrity ok, {result.seconds} s)"
+    )
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace, settings: Settings) -> int:
+    from app.database.backup import BackupError, restore_backup
+    from app.services.doctor import probe_hound
+
+    database = _database_file(settings)
+    if database is None:
+        return 2
+    if probe_hound(settings.api_base_url):
+        print(
+            f"Hound is running at {settings.api_base_url}. Stop the server (and the capture daemon) first, "
+            "then run restore again.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        result = restore_backup(Path(args.backup).expanduser().resolve(), database, datetime.now(UTC))
+    except BackupError as exc:
+        print(f"Restore refused: {exc}", file=sys.stderr)
+        return 2
+    kept = f" The previous database was kept as {result.previous_saved_as}." if result.previous_saved_as else ""
+    print(
+        f"Restored {result.database} from {result.restored_from} "
+        f"({result.info.events or 0:,} events, schema v{result.info.version}).{kept} Start Hound as usual."
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(normalize_argv(sys.argv[1:] if argv is None else argv))
@@ -249,6 +314,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_doctor(args, settings)
         if args.command == "reload":
             return cmd_reload(args, settings)
+        if args.command == "backup":
+            return cmd_backup(args, settings)
+        if args.command == "restore":
+            return cmd_restore(args, settings)
         return cmd_serve(args, settings)
     except KeyboardInterrupt:
         return 130

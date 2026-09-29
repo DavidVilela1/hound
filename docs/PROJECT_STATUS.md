@@ -5,19 +5,19 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (session 12: task 16c reload without restart)
+Last updated:      2026-09-29 (session 13: task 17a backup + restore)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
 Current phase:     Phase 16 — engineering part done (16a–16c); 16d field trial needs the
                    owner. Phase 17 (data lifecycle) starts meanwhile. Phase 14's last
                    items (licence, version label) wait on the owner
 Current task:      none in progress
-Next task:         17a `python run.py backup` — consistent SQLite backup + verified restore
+Next task:         17b export events and devices (CSV/JSON)
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon, an automatically tested dashboard, reproducible
                    hash-checked installs, a read-only `doctor` setup check and per-stage
                    loss metrics (`/api/metrics`), a reproducible benchmark and an
-                   owner allowlist, a risk settings file and reload without restart
-                   (94 % line coverage). Linux: 362 tests pass
+                   owner allowlist, a risk settings file, reload without restart and
+                   backup/restore (94 % line coverage). Linux: 380 tests pass
                    (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
                    skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
                    capture works on Windows (split mode, Npcap, "Wi-Fi").
@@ -40,7 +40,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       362 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       380 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -105,6 +105,16 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-29 s13 | `pytest` with the restore fix — **owner's Windows laptop** | Windows | 369 passed, 5 skipped (expected: 4 Linux-only folder-name cases are not generated on Windows; 5 POSIX file-mode skips). Output also showed "--- Logging error --- ValueError: I/O operation on closed file" |
+| 2026-09-29 s13 | Diagnosis of the logging error | Linux | tests calling `cli.main` → `configure_logging()` replaced the root handlers with one bound to that test's captured stderr (`_io.FileIO name=8`), which pytest later closes; any later log line (e.g. a server thread shutting down) then fails. Reproduced deterministically by `tests/test_logging_isolation.py` (failed before the fix) |
+| 2026-09-29 s13 | After an autouse conftest fixture that restores root/uvicorn/noisy-logger handlers, levels and propagation after every test | Linux | isolation tests 2/2; full suite 380 / 380 / 380 (dev, 3.11 lock, 3.13 lock), no "Logging error"; ruff/mypy clean. Windows re-run pending (expect 371 passed, 5 skipped) |
+| 2026-09-29 s13 | `pytest` with 17a — **owner's Windows laptop** | Windows | **1 failed**, 367 passed, 5 skipped: `test_restore_brings_back_the_backup…` — `PermissionError [WinError 32]` moving the database |
+| 2026-09-29 s13 | Diagnosis | Linux | (1) test bug: `count_events()` used `with sqlite3.connect()`, which commits but does not close → the file stayed open and Windows refused the move; (2) **real bug**: after the failed move, restore's rollback called `database.unlink()` on the *original* database — blocked on Windows only by the lock, on Linux it would delete the live database. Regression test written first: on Linux the database was indeed deleted (`exists()` False) |
+| 2026-09-29 s13 | After the fix (rollback removes the file only once the original is aside and copying began; test connections closed with `contextlib.closing`) | Linux | backup tests 16/16; regression test passes; Py 3.13 `ResourceWarning` proxy for Windows file locks: old `count_events` → 8 unclosed connections, fixed → 0; full suite 378 / 378 / 378 (dev, 3.11 lock, 3.13 lock); ruff/mypy clean |
+| 2026-09-29 s13 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 377 / 377 / 377 passed; clean; smoke all passed; `backup.py` 93 %, `inspect.py` 98 % |
+| 2026-09-29 s13 | Mutation check (8: copy left in WAL mode, overwrite allowed, any backup restorable, no rollback, copy created world-readable, restored file not private, restore while running, failed copy left behind) | Py 3.11 | 7 caught at first; **"created world-readable" survived** (the final chmod hid it) → test now observes the mode mid-backup; then caught |
+| 2026-09-29 s13 | **Real cycle on a demo server**: `backup` ×2 while writing; `restore` while running; stop; `restore`; start | Linux, lock venv 3.13 | backups with 151 / 262 events, integrity ok; restore while running refused (exit 2); after stop the DB had 302 events → restored to 151, previous kept as `hound.db.before-restore-…`; modes 600 (DB, backup) / 700 (backups dir); restarted server reports 151 events |
+| 2026-09-29 s13 | SQLite `-wal`/`-shm` permissions check | Py 3.11 / SQLite | created with the DB file's mode (0600) → corrected a wrong statement in ARCHITECTURE §3.11a |
 | 2026-09-29 s12 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 362 / 362 / 362 passed; clean; smoke all passed; `routes/admin.py` 100 % |
 | 2026-09-29 s12 | Mutation check (6: swap without the batch lock, windows always reset, DNS cache dropped, no token check, not all-or-nothing, CLI hiding a refusal) — every run under `timeout` | Py 3.11 | each caught; originals restored |
 | 2026-09-29 s12 | **Real demo server + real `python run.py reload`**: `[weights] blocklisted_domain = 0` written, reloaded, then a typo'd file | Linux, lock venv 3.13 | before: 18 blocklist hits, all DANGEROUS (70 pts); reload exit 0; events after: 9 hits with 0 pts (8 SAFE, 1 SUSPICIOUS from other signals); typo → "Reload refused (HTTP 400) … weights.blocklisted: unknown setting … previous settings stay in effect", exit 1, server still serving |
@@ -260,15 +270,29 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   `file_value_count()` (doctor + reload). `tests/test_reload.py` (10). README §8/§11/§13,
   shipped config comments, ARCHITECTURE §3.11, ADR-023, CHANGELOG.
 
+- **17a Backup + restore (session 13):** `app/database/backup.py` (ADR-024):
+  `python run.py backup [PATH]` (SQLite online backup API, safe while writing; owner-only
+  from the first byte; single file; integrity-checked; never overwrites; default
+  `data/backups/hound-<UTC time>.db`) and `python run.py restore BACKUP` (refuses while a
+  Hound answers; validates integrity/version/structure; moves the current DB + WAL/SHM
+  aside; rolls back on failure). `app/database/inspect.py` now holds the read-only
+  helpers `doctor` used (`sqlite_path`, `open_read_only`, `inspect_database`), shared by
+  doctor and restore; `doctor.probe_hound` made public. `tests/test_backup.py` (16).
+  **Fixed after the owner's Windows run:** a failed move during restore made the rollback
+  delete the *original* database (Linux would have lost it; Windows' lock prevented it);
+  now only a partial copy is ever removed — regression test added. Also from that run:
+  tests leaked the CLI's logging handler (bound to a closed capture stream) → autouse
+  fixture in `tests/conftest.py` restores logging state after each test.
+  README "Backups", command table, tree; ARCHITECTURE §3.7/§3.11a; ADR-024; CHANGELOG.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **17a Backup command.** `python run.py backup [PATH]`: a consistent copy of the live
-   database with SQLite's online backup API (safe while the server writes), owner-only
-   file permissions, integrity check of the copy, and a documented, test-verified
-   restore. Today the README only says "copy `data/`", which is unsafe with WAL files
-   while running. Protects the owner's data before the field trial. Unblocked.
+1. **17b Export.** Events (filterable like `/api/events`) and devices as CSV and JSON,
+   via API endpoints and/or `python run.py export`, streaming so large exports stay within
+   bounded memory; CSV safe against formula injection (a domain starting with `=`, `+`,
+   `-`, `@` must not execute in a spreadsheet). For the field-trial review. Unblocked.
 2. 16d field trial + tuning (needs the owner's monitoring position).
 3. 14.3b LICENSE + version label, once the owner decides.
 4. Owner: if an older `.env` was copied from `.env.example`, remove its `HOUND_RISK_*`
@@ -297,7 +321,9 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   silent device keeps its last level. The UI caption doesn't explain this; revisit in 16.
 - `devices` rows are never expired; counters are lifetime totals even after event
   retention prunes old events → 17.
-- No backup command yet; the README advises copying `data/` before upgrades → 17.
+- Backups accumulate in `data/backups/` (no rotation or pruning yet).
+- `restore` detects a running server only on the configured port; a server started on
+  another port is not detected (on Windows the file move then fails and is rolled back).
 - `/api/stats` uses `COUNT(*)` scans (71 ms at the 250 k cap) → only if metrics show need.
 - The forwarder opens one TCP connection per batch (ADR-016); fine at the current cadence.
 - `Database.initialize()` runs twice at server start (CLI pre-flight + lifespan); the second

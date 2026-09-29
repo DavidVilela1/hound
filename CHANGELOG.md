@@ -11,6 +11,10 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **Backup and restore**: `python run.py backup [PATH]` writes a consistent,
+  integrity-checked, owner-only copy of the database (safe while capturing);
+  `python run.py restore BACKUP` validates the backup, refuses while Hound runs and keeps
+  the current database aside instead of deleting it (ADR-024).
 - **Reload without restart**: `python run.py reload` (token-authenticated
   `POST /api/admin/reload`) re-reads the blocklist, allowlist and risk settings and
   applies them between two batches; all or nothing, and learned DNS answers and device

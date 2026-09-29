@@ -286,7 +286,22 @@ automatically and carries a schema version. When a newer Hound needs a different
 it upgrades the file on start-up, one atomic step at a time, keeping your data. Databases
 created before versioning existed are recognised and adopted. Hound refuses to start —
 without touching the file — on a database written by a *newer* Hound, or on a file that
-isn't a Hound database. Back up `data/` before upgrading if the history matters to you.
+isn't a Hound database.
+
+**Backups.** `python run.py backup` writes a consistent copy of the database to
+`data/backups/hound-<date>-<time>.db` (or the path you give), and it is safe to
+run while Hound is capturing. The copy is a single self-contained file, readable
+only by you on Linux/macOS, and it passes SQLite's integrity check or is
+deleted; existing files are never overwritten. Take one before upgrading Hound.
+Do not copy `data/hound.db` by hand while Hound runs — recent changes may still
+sit in `hound.db-wal`.
+
+To go back to a backup, stop the server and the capture daemon, then run
+`python run.py restore data/backups/<file>.db`. It refuses while Hound is still
+running, and refuses backups that are damaged, written by a newer Hound or not a
+Hound database. Your current database is not deleted: it is moved aside as
+`hound.db.before-restore-<date>-<time>` (with its `-wal`/`-shm` files). Then
+start Hound as usual; an older backup is upgraded automatically.
 
 ## 9. Finding the network interface
 
@@ -417,6 +432,8 @@ closed local ports; they appear in the dashboard within a second, and
 | `python run.py interfaces` | list interfaces | none (usually) |
 | `python run.py doctor [-i IFACE]` | read-only environment check | none (run it elevated to check capture rights) |
 | `python run.py reload` | apply edited blocklist/allowlist/risk settings to the running server | none |
+| `python run.py backup [PATH]` | consistent database copy (safe while running) | none |
+| `python run.py restore BACKUP` | replace the database with a backup (server stopped) | none |
 
 `python -m app …` and (after `pip install -e .`) `hound …` accept the same arguments.
 
@@ -649,6 +666,8 @@ hound/
 │   ├── database/
 │   │   ├── engine.py          # engine, sessions, SQLite pragmas, auto-init
 │   │   ├── migrations.py      # schema versioning: frozen baseline + ordered migrations
+│   │   ├── backup.py          # consistent backup + guarded restore
+│   │   ├── inspect.py         # read-only classification of database files
 │   │   ├── tables.py          # ORM schema + indexes
 │   │   └── repositories.py    # all SQL queries
 │   ├── enrichment/

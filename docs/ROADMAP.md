@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-29 (16c done; next: 17a backup command).
+> Last reviewed: 2026-09-29 (17a done; next: 17b export).
 
 ---
 
@@ -305,8 +305,8 @@ M6 stays open until its exit criteria are met.*
 
 ### Phase 17 — Data lifecycle
 *Sequencing note (2026-09-29): 16d needs the owner's monitoring position; Phase 17 starts
-meanwhile. Slices: **17a `backup` command + verified restore ← next task** · 17b export
-(CSV/JSON) · 17c device-row expiry + time-based retention · 17d periodic `PRAGMA optimize`.*
+meanwhile. Slices: 17a `backup` command + verified restore — **DONE** (ADR-024) ·
+**17b export (CSV/JSON) ← next task** · 17c device-row expiry + time-based retention · 17d periodic `PRAGMA optimize`.*
 * **Tasks:** `hound db backup` (SQLite online backup API), CSV/JSON export endpoint,
   device-row expiry, optional time-based retention, periodic `PRAGMA optimize`.
 * **Prereq:** 14.2. **Acceptance:** restore from backup verified by test.

@@ -150,6 +150,15 @@ tested · extension points. File references are to the current code.
   `app/database/migrations.py` (ADR-018); legacy v1.0 databases are adopted; newer or
   foreign databases are refused unchanged. Tests: `tests/test_migrations.py` (incl. a
   guard that the migrated schema equals the ORM models).
+* **Backup / restore** (`app/database/backup.py`, ADR-024): `create_backup` uses SQLite's
+  online backup API (consistent while the server writes), creates the copy owner-only
+  before writing, converts it to a single file (`journal_mode=DELETE`) and requires
+  `integrity_check = ok`, deleting the copy otherwise. `restore_backup` validates the
+  backup read-only (`app/database/inspect.py`: integrity, schema version, Hound
+  structure), moves the current database and its `-wal`/`-shm` aside (never deletes),
+  copies the backup in, and rolls back on failure (removing the file at the database path
+  only if it is the partial copy, never the original). The CLI refuses to restore while a
+  Hound answers on the configured port. Tests: `tests/test_backup.py`.
 
 ### 3.8 API — `app/api/`
 * **Responsibility:** thin HTTP layer: validation, auth for ingest, JSON contracts.
@@ -204,8 +213,10 @@ tested · extension points. File references are to the current code.
   status + fix per check; exit code 1 on any failure.
 * **Read-only guarantee:** never creates the database, token or directories. The database
   is opened `mode=ro`, and additionally `immutable=1` when no `-wal` file exists — plain
-  read-only mode would otherwise create `-wal`/`-shm` files (verified), with default
-  permissions. The port check binds and releases a socket; if the port is taken it
+  read-only mode would otherwise create `-wal`/`-shm` files (verified; SQLite gives them
+  the database file's permissions, so this is about not writing, not about exposure —
+  an earlier note here claiming "default permissions" was wrong). Shared helpers live in
+  `app/database/inspect.py` (also used by backup/restore). The port check binds and releases a socket; if the port is taken it
   identifies a running Hound via `GET /health` (proxy-free opener, ADR-016).
 * **Tests:** `tests/test_doctor.py` — each check's outcomes (platform-specific ones via
   injected inputs, so the Windows/Npcap branch runs on Linux), a real running server,

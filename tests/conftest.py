@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,6 +45,29 @@ def _isolate_from_host_routing() -> Iterator[None]:
         mp.setattr(Route, "route", lambda self, *a, **k: (UNKNOWN_ADAPTER, "0.0.0.0", "0.0.0.0"))
         mp.setattr(Route6, "route", lambda self, *a, **k: (UNKNOWN_ADAPTER, "::", "::"))
         yield
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging_setup() -> Iterator[None]:
+    """Undo process-wide logging changes a test makes (e.g. ``cli.main`` → ``configure_logging``).
+
+    Otherwise the root logger keeps a handler bound to that test's captured stderr, which
+    pytest later closes → "Logging error ... I/O operation on closed file" (owner's Windows
+    run). See tests/test_logging_isolation.py.
+    """
+    from app.core.logging_config import _NOISY_LOGGERS
+
+    root = logging.getLogger()
+    touched = [logging.getLogger(name) for name in (*_NOISY_LOGGERS, "uvicorn", "uvicorn.error", "uvicorn.access")]
+    saved_root = (list(root.handlers), root.level)
+    saved = [(logger, list(logger.handlers), logger.level, logger.propagate) for logger in touched]
+    yield
+    root.handlers[:] = saved_root[0]
+    root.setLevel(saved_root[1])
+    for logger, handlers, level, propagate in saved:
+        logger.handlers[:] = handlers
+        logger.setLevel(level)
+        logger.propagate = propagate
 
 
 @pytest.fixture

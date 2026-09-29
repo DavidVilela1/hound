@@ -26,14 +26,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from urllib.parse import quote
-
-from sqlalchemy.engine import make_url
 
 from app import __version__
 from app.core.config import PROJECT_ROOT, Settings
 from app.core.privileges import is_privileged
 from app.core.security import MIN_TOKEN_LENGTH
+from app.database.inspect import Compatibility, inspect_database, sqlite_path
+from app.database.migrations import latest_version
 
 MIN_PYTHON = (3, 11)
 NPCAP_URL = "https://npcap.com"
@@ -229,7 +228,7 @@ def check_bind_address(settings: Settings) -> Check:
     )
 
 
-def _probe_hound(url: str) -> str | None:
+def probe_hound(url: str) -> str | None:
     """Version reported by a Hound server at ``url``, or ``None`` if something else answers."""
     from app.ingestion.forwarder import DIRECT_OPENER  # proxy-free: always talks to the local server
 
@@ -248,7 +247,7 @@ def _probe_hound(url: str) -> str | None:
     return None
 
 
-def check_port(settings: Settings, probe: Callable[[str], str | None] = _probe_hound) -> Check:
+def check_port(settings: Settings, probe: Callable[[str], str | None] = probe_hound) -> Check:
     name = f"Port {settings.port}"
     try:
         infos = socket.getaddrinfo(settings.host, settings.port, type=socket.SOCK_STREAM)
@@ -277,15 +276,8 @@ def check_port(settings: Settings, probe: Callable[[str], str | None] = _probe_h
     )
 
 
-def _sqlite_path(settings: Settings) -> Path | None:
-    url = make_url(settings.resolved_database_url)
-    if url.get_backend_name() != "sqlite" or not url.database or url.database == ":memory:":
-        return None
-    return Path(url.database)
-
-
 def check_storage_location(settings: Settings) -> Check:
-    paths = [p for p in (_sqlite_path(settings), settings.resolve_path(settings.ingest_token_path)) if p is not None]
+    paths = [p for p in (sqlite_path(settings), settings.resolve_path(settings.ingest_token_path)) if p is not None]
     synced = sorted({str(p.parent) for p in paths if any(m in str(p).lower() for m in CLOUD_SYNC_MARKERS)})
     if synced:
         return Check(
@@ -306,21 +298,8 @@ def _existing_ancestor(path: Path) -> Path:
     return path
 
 
-def _open_read_only(path: Path) -> sqlite3.Connection:
-    # Without a WAL file the database is fully checkpointed: `immutable` then reads it without
-    # creating -wal/-shm files. With a WAL file present (server running or unclean stop),
-    # plain read-only mode is needed to see the latest committed state.
-    wal_present = Path(f"{path}-wal").exists()
-    options = "mode=ro" if wal_present else "mode=ro&immutable=1"
-    # Canonical SQLite URI: file:///home/u/hound.db (POSIX), file:///C:/Users/u/hound.db (Windows).
-    location = quote(path.as_posix(), safe="/:").lstrip("/")
-    return sqlite3.connect(f"file:///{location}?{options}", uri=True)
-
-
 def check_database(settings: Settings) -> Check:
-    from app.database.migrations import baseline_fingerprint, latest_version, schema_fingerprint
-
-    path = _sqlite_path(settings)
+    path = sqlite_path(settings)
     if path is None:
         return Check("Database", Status.INFO, "not a local SQLite file; not checked")
     if not path.exists():
@@ -335,16 +314,7 @@ def check_database(settings: Settings) -> Check:
         )
     target = latest_version()
     try:
-        connection = _open_read_only(path)
-        try:
-            cursor = connection.cursor()
-            version = int(cursor.execute("PRAGMA user_version").fetchone()[0])
-            has_tables = cursor.execute(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-            ).fetchone()[0]
-            legacy_matches = version == 0 and has_tables and schema_fingerprint(cursor) == baseline_fingerprint()
-        finally:
-            connection.close()
+        info = inspect_database(path)
     except sqlite3.DatabaseError as exc:
         return Check(
             "Database",
@@ -352,28 +322,29 @@ def check_database(settings: Settings) -> Check:
             f"{path} cannot be read as a Hound database ({exc})",
             "Move the file away or set HOUND_DATABASE_URL.",
         )
+    version = info.version
     if not _writable(path) or not _writable(path.parent):
         writable_fix = "Run the server as the user that owns the data folder, or fix its permissions."
         return Check("Database", Status.FAIL, f"{path} (schema v{version}) is not writable by this user", writable_fix)
-    if version > target:
+    if info.compatibility is Compatibility.NEWER:
         return Check(
             "Database",
             Status.FAIL,
             f"schema v{version} was written by a newer Hound (this one supports v{target})",
             "Use the newer Hound, or start fresh with another HOUND_DATABASE_URL (README: Database and upgrades).",
         )
-    if version == 0 and has_tables:
-        if legacy_matches:
-            return Check("Database", Status.INFO, f"{path}: from an earlier build; will be adopted as v1 on start")
+    if info.compatibility is Compatibility.ADOPT:
+        return Check("Database", Status.INFO, f"{path}: from an earlier build; will be adopted as v1 on start")
+    if info.compatibility is Compatibility.FOREIGN:
         return Check(
             "Database",
             Status.FAIL,
             f"{path} contains tables that are not a Hound database",
             "Move the file away or set HOUND_DATABASE_URL.",
         )
-    if version < target:
+    if info.compatibility in (Compatibility.UPGRADE, Compatibility.EMPTY):
         return Check("Database", Status.INFO, f"{path}: schema v{version}; will be upgraded to v{target} on start")
-    return Check("Database", Status.OK, f"{path} (schema v{version}, current)")
+    return Check("Database", Status.OK, f"{path} (schema v{version}, current, {info.events or 0:,} events)")
 
 
 def _writable(path: Path) -> bool:
