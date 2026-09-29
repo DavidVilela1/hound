@@ -40,7 +40,7 @@ every task; no new frameworks without an ADR; measure before optimising.
 | M3 | Security intelligence | enrichment + deterministic risk | VERIFIED | `tests/test_enrichment.py`, `tests/test_risk.py` |
 | M4 | Live dashboard | UI shows events live | VERIFIED (manual) | Playwright run: live rows update, dialogs, filters, dark/mobile |
 | M5 | Demo complete | full app without privileges | VERIFIED | `scripts/smoke_test.py` 12/12 |
-| **M6** | **Production-quality local build** | green on Windows/macOS/Linux CI; versioned schema; reproducible install; automated daemon/dashboard smoke; docs current | **IN_PROGRESS** | see Phase 14 |
+| **M6** | **Production-quality local build** | green on Windows/macOS/Linux CI; versioned schema; reproducible install; automated daemon/dashboard smoke; docs current | **VERIFIED (2026-09-29)** | CI green (owner); schema v1 + migrations; hash-checked locks; daemon + dashboard tests; MIT licence; version 1.0.0 |
 | M7 | Field-validated | ≥ 7 days on the owner's network; false-positive review done; metrics show no drops | NOT_STARTED | |
 | M8 | Durable & device-aware | backups/export; device identity beyond IP | NOT_STARTED | |
 | M9 | Actionable | opt-in alerts for dangerous events | NOT_STARTED | |
@@ -216,9 +216,11 @@ LICENSE + version label (owner decisions).*
 * `CHANGELOG.md` created. `pytest` stays in `requirements.txt` for now (owner preference
   not stated; moving it is a 14.3b question).
 
-**14.3b LICENSE + version label — blocked on owner decisions.** Licence: owner leaned to
-GPL-3.0, then deferred after the dependency survey found Scapy core is GPL-2.0-only
-(details and options in `PROJECT_STATUS.md` §6). Version label: still open.
+**14.3b LICENSE + version label — DONE (2026-09-29).** Owner chose **MIT** (after the
+dependency survey found Scapy core is GPL-2.0-only; MIT is compatible with using it) and
+kept the label **1.0.0**. `LICENSE`, PEP 639 metadata (`license = "MIT"`, setuptools ≥ 77
+at build time; wheel verified: `License-Expression: MIT`), README §21, CHANGELOG
+`[1.0.0]` (ADR-025). → **M6 reached.**
 * **Tasks:** generated lock file (`requirements.lock` via `pip-compile` or `uv pip
   compile`, dev-only tool) used by CI; `CHANGELOG.md`; version policy (owner decision:
   keep 1.0.0 or re-label 0.9.0 until M6); **LICENSE** (owner decision); move `pytest` to
@@ -292,8 +294,10 @@ M6 stays open until its exit criteria are met.*
 ### Phase 16 — Field trial & detection tuning → M7
 * **Slices:** 16a allowlist — **DONE** (ADR-021) · 16b risk settings from an optional TOML
   file — **DONE** (ADR-022) · 16c blocklist/allowlist/risk-settings reload without restart
-  — **DONE** (ADR-023) · 16d field
-  trial + tuning (needs the owner's monitoring position).
+  — **DONE** (ADR-023) · **16e deployment positions** (ADR-026: the owner picks where
+  Hound runs; Hound states what that position can and cannot see — in `doctor`, the
+  dashboard and the README) · 16d field trial + tuning (needs the owner's monitoring
+  position; owner plans it for the week of 2026-10-05).
 * **Tasks:** run on the owner's network ≥ 7 days (split mode); review every
   suspicious/dangerous event; add an **allowlist** (domains/devices never flagged);
   load signal weights/thresholds from an optional TOML file (stdlib `tomllib`, no new
@@ -329,7 +333,8 @@ meanwhile. Slices: 17a `backup` command + verified restore — **DONE** (ADR-024
 ### Phase 21 — Distribution → M10
 * **Tasks:** rename package `app` → `hound` (ADR-011 revisit); wheel/pipx install; service
   units (systemd/launchd/Windows service for the daemon); optional Docker image (Linux,
-  `--net=host`, `NET_RAW`); release notes; tag 1.0.
+  `--net=host`, `NET_RAW`); release notes; tag the version current at that point (1.0.0
+  was labelled at M6).
 
 ---
 
@@ -402,6 +407,14 @@ directly with shorter synthetic domains.
 | `/api/devices`, `/api/metrics` at 250 k rows | 4 ms, 2 ms |
 | DB size (after WAL checkpoint) | ≈ 516 B/event with the demo mix → ≈ 123 MiB at the 250 000-event cap (s1: 390 B, 93 MiB) |
 | Peak process memory | ≈ 163 MiB (s1: 185 MiB) |
+
+**Owner's laptop** (Windows 10, 16 CPUs, Python 3.13.7; `python scripts/benchmark.py`,
+50 000 rows; 2026-09-29): dissection 4 244 pkt/s · parsing 13 564 pkt/s · processing
+959 / 4 793 / 5 565 events/s at batch 1 / 50 / 200 (batch-200 p95 54 ms) · `/api/stats`
+32.5 ms, countries 10.9 ms, events 6.0 ms (7.3 ms with domain), devices 3.5 ms,
+metrics 1.8 ms · 508 B/event · headroom 55.6× · peak memory not reported (Windows bug in
+the script, fixed afterwards; re-run pending). Same order as the Linux sandbox — the
+pipeline is single-threaded, so 16 CPUs do not change it.
 
 A busy home network produces tens of DNS queries and SYNs per second — two orders of
 magnitude below these limits. **No optimisation is planned now.**

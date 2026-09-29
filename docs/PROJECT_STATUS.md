@@ -5,22 +5,19 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (session 13: task 17a backup + restore)
-Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
-Current phase:     Phase 16 — engineering part done (16a–16c); 16d field trial needs the
-                   owner. Phase 17 (data lifecycle) starts meanwhile. Phase 14's last
-                   items (licence, version label) wait on the owner
+Last updated:      2026-09-29 (owner decisions: MIT licence, version 1.0.0 → M6 reached)
+Current milestone: M7 — Field-validated (M0–M6 reached; M2 on Linux + Windows)
+Current phase:     Phase 17 — Data lifecycle (17a done); Phase 16's field trial (16d) is
+                   planned by the owner for the week of 2026-10-05; 16e deployment
+                   positions defined (ADR-026), not started
 Current task:      none in progress
 Next task:         17b export events and devices (CSV/JSON)
-Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
-                   tested capture daemon, an automatically tested dashboard, reproducible
-                   hash-checked installs, a read-only `doctor` setup check and per-stage
-                   loss metrics (`/api/metrics`), a reproducible benchmark and an
-                   owner allowlist, a risk settings file, reload without restart and
-                   backup/restore (94 % line coverage). Linux: 380 tests pass
-                   (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
-                   skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
-                   capture works on Windows (split mode, Npcap, "Wi-Fi").
+Overall state:     Hound 1.0.0 (MIT): capture (split mode, Linux + Windows), enrichment,
+                   explainable risk with allowlist and a tunable risk file (reloadable),
+                   API, live dashboard, metrics, doctor, backup/restore, benchmark.
+                   Linux: 380 tests pass (Py 3.11 + 3.13, from the lock). Owner: Windows
+                   369 passed + 5 skipped (before the logging fix); CI green; backup works
+                   on the laptop; benchmark baseline recorded (ROADMAP §I).
 ```
 
 ## 1. Baseline assessment
@@ -46,8 +43,8 @@ Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example pa
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
                                 S-3 fuzz, S-6 documented, S-8 done; daemon ignores proxies
 Documentation   FUNCTIONAL      README covers upgrades/refusals; Windows guidance owner-checked
-Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELOG, CI installs
-                                the lock; missing: LICENSE, version label (owner) → 14.3b
+Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELOG [1.0.0], MIT
+                                LICENSE with PEP 639 metadata (wheel builds), CI installs the lock
 ```
 `*` = verified with the caveat in the notes.
 
@@ -105,6 +102,9 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-29 s14 | **Owner decisions**: licence MIT, version label 1.0.0 | — | `LICENSE` added; `pyproject.toml` `license = "MIT"`, `license-files`, setuptools ≥ 77; `pip wheel .` built `hound-1.0.0` with `License-Expression: MIT` and `licenses/LICENSE`; CHANGELOG `[1.0.0] - 2026-09-29`; ADR-025 → **M6 reached** |
+| 2026-09-29 s14 | `python run.py backup` — **owner's Windows laptop** | Windows | works (owner report) |
+| 2026-09-29 s14 | `python scripts/benchmark.py` — **owner's Windows laptop** (16 CPUs, Py 3.13.7) | Windows | batch-200 5 565 events/s; `/api/stats` 32.5 ms at 50 k rows; 508 B/event; headroom 55.6×; peak memory "n/a" → **bug**: ctypes passed the process handle as a 32-bit int (no argtypes/restype) → fixed with declared signatures (`K32GetProcessMemoryInfo`); untested on Windows here, re-run pending |
 | 2026-09-29 s13 | `pytest` with the restore fix — **owner's Windows laptop** | Windows | 369 passed, 5 skipped (expected: 4 Linux-only folder-name cases are not generated on Windows; 5 POSIX file-mode skips). Output also showed "--- Logging error --- ValueError: I/O operation on closed file" |
 | 2026-09-29 s13 | Diagnosis of the logging error | Linux | tests calling `cli.main` → `configure_logging()` replaced the root handlers with one bound to that test's captured stderr (`_io.FileIO name=8`), which pytest later closes; any later log line (e.g. a server thread shutting down) then fails. Reproduced deterministically by `tests/test_logging_isolation.py` (failed before the fix) |
 | 2026-09-29 s13 | After an autouse conftest fixture that restores root/uvicorn/noisy-logger handlers, levels and propagation after every test | Linux | isolation tests 2/2; full suite 380 / 380 / 380 (dev, 3.11 lock, 3.13 lock), no "Logging error"; ruff/mypy clean. Windows re-run pending (expect 371 passed, 5 skipped) |
@@ -285,6 +285,11 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   fixture in `tests/conftest.py` restores logging state after each test.
   README "Backups", command table, tree; ARCHITECTURE §3.7/§3.11a; ADR-024; CHANGELOG.
 
+- **14.3b Licence + version (session 14, owner decisions):** MIT + 1.0.0 → M6 reached
+  (ADR-025). Also: Windows peak-memory measurement in `scripts/benchmark.py` fixed; owner's
+  benchmark recorded as the laptop baseline (ROADMAP §I); deployment-position principle
+  recorded (ADR-026, roadmap slice 16e).
+
 ## 4. In progress
 - Nothing.
 
@@ -293,8 +298,10 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
    via API endpoints and/or `python run.py export`, streaming so large exports stay within
    bounded memory; CSV safe against formula injection (a domain starting with `=`, `+`,
    `-`, `@` must not execute in a spreadsheet). For the field-trial review. Unblocked.
-2. 16d field trial + tuning (needs the owner's monitoring position).
-3. 14.3b LICENSE + version label, once the owner decides.
+2. 16e deployment positions (ADR-026): the owner picks the position; `doctor`, the
+   dashboard and the README state what it can and cannot see; infer "this computer only"
+   from traffic where possible. Best done before the field trial.
+3. 16d field trial + tuning (owner: week of 2026-10-05).
 4. Owner: if an older `.env` was copied from `.env.example`, remove its `HOUND_RISK_*`
    lines (or `python run.py doctor` shows them as overrides).
 4. Owner: run `python scripts/benchmark.py` on the Windows laptop once, to record a
@@ -303,9 +310,8 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
-| License | Owner leans to GPL-3.0 but deferred the decision (2026-09-28) after the dependency check below: Scapy core is **GPL-2.0-only**, which the FSF treats as incompatible with GPL-3.0 in a combined program; options considered: GPL-2.0-or-later, GPL-3.0-or-later, GPL-3.0-only. Not legal advice — worth a qualified opinion before publishing a release | 14.3b |
-| Version label | Keep `1.0.0` or re-label `0.9.0` until M6 | 14.3b |
-| Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host) | M7 |
+| Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host); owner plans it for the week of 2026-10-05 | M7 |
+| Benchmark re-run on Windows | `python scripts/benchmark.py` once more, to confirm the peak-memory fix (Windows-only code path, untested here) | nothing (informational) |
 
 ## 7. Technical debt
 

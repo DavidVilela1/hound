@@ -33,6 +33,8 @@ change their status or add a "Revisited" note.
 | 022 | Risk settings in a strict TOML file; explicitly set environment values override it | Accepted |
 | 023 | Reload detection settings via a token-protected endpoint; all-or-nothing swap between batches, learned state kept | Accepted |
 | 024 | Backups via SQLite's online backup API; restore validates and moves the current database aside | Accepted |
+| 025 | MIT licence; first release labelled 1.0.0 | Accepted |
+| 026 | Deployment position chosen by the owner; Hound is explicit about what each position can see | Accepted (principle; implementation 16e) |
 
 ---
 
@@ -378,3 +380,27 @@ change their status or add a "Revisited" note.
   failed, i.e. it could delete the live database (Linux; Windows was saved by its file
   lock). The rollback now removes that file only after every original is aside and the
   copy has started. Lesson recorded: a rollback must know which state it is undoing.
+
+## ADR-025 — MIT licence; version 1.0.0
+* **Context:** release hygiene (14.3b) needed a licence and a version label. The
+  dependency survey (2026-09-28) found Scapy core is GPL-2.0-only, which ruled out a
+  clean GPL-3.0 story.
+* **Chosen (owner, 2026-09-29):** MIT (`LICENSE`, `license = "MIT"` + `license-files` per
+  PEP 639, so the build backend needs setuptools ≥ 77); label **1.0.0** for the M6 build.
+* **Reason:** permissive, simple, and compatible with importing GPL-2.0-only Scapy (MIT
+  code can be combined with GPL code; the combination, if distributed, follows the GPL).
+  Hound ships its own source only; users install dependencies from PyPI.
+* **Consequences:** anyone may reuse Hound's code, including in closed products. The
+  roadmap's "tag 1.0 at M10" becomes "tag the current version at M10". Not legal advice.
+
+## ADR-026 — The owner chooses the deployment position; Hound says what it can see
+* **Context:** what Hound observes depends entirely on where it captures: on a Wi-Fi
+  laptop it sees only that laptop; on the router, a switch mirror port or the DNS host it
+  can see the household. Users easily misread an empty dashboard as "nothing happened".
+* **Chosen (owner, 2026-09-29):** do not impose one topology. The user picks the position
+  (laptop, router/gateway, mirror/SPAN port, DNS server); Hound is **opinionated about
+  what each position can and cannot see** and says so where it matters: `doctor`, the
+  dashboard (visible coverage note) and the README. Where possible Hound infers the
+  position from traffic (e.g. only one source device seen → "this computer only").
+* **Consequences:** a new slice 16e in the roadmap; a small setting or inference step;
+  copy that must stay accurate per position. Implementation not started.

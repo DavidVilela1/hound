@@ -33,6 +33,7 @@ dashboard — entirely on your own machine, with no cloud service.
 18. [Security considerations](#18-security-considerations)
 19. [Limitations](#19-limitations)
 20. [Future improvements](#20-future-improvements)
+21. [License](#21-license)
 
 **Project planning docs:** current state and next task in
 [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md); plan in [`docs/ROADMAP.md`](docs/ROADMAP.md);
@@ -820,3 +821,10 @@ hound/
 * Optional dashboard authentication for LAN-wide deployments.
 * Per-device baselines ("first time this device contacted this country").
 * Packaged service units (systemd, launchd, Windows service).
+
+## 21. License
+
+Hound is released under the [MIT License](LICENSE). Its dependencies keep their own
+licences — most are permissive (MIT, BSD, Apache-2.0, MPL-2.0); Scapy, used for packet
+capture and parsing, is GPL-2.0-only. Hound only imports the packages you install
+from PyPI and does not ship them.

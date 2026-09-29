@@ -1,16 +1,20 @@
 # Changelog
 
 All notable changes to Hound are recorded here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions will follow
-[Semantic Versioning](https://semver.org/) once the first release is tagged.
-
-No version has been released yet. `pyproject.toml` says `1.0.0`, but whether the
-first release is called `1.0.0` or `0.9.0` is an open owner decision (roadmap 14.3b).
-Until then everything is listed under **Unreleased**.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
+[Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.0.0] - 2026-09-29
+
+First labelled release (milestone M6, production-quality local build). Licensed under MIT.
+Everything since the initial build:
+
 ### Added
+- **MIT license** (`LICENSE`, `license = "MIT"` in `pyproject.toml`).
 - **Backup and restore**: `python run.py backup [PATH]` writes a consistent,
   integrity-checked, owner-only copy of the database (safe while capturing);
   `python run.py restore BACKUP` validates the backup, refuses while Hound runs and keeps
@@ -88,7 +92,7 @@ Until then everything is listed under **Unreleased**.
 - On Linux/macOS the data directory is created owner-only (`0700`), and the database and
   its `-wal`/`-shm` files are restricted to the owner (`0600`).
 
-## Initial build (not released; labelled 1.0.0)
+## Initial build (before 1.0.0; never released on its own)
 
 The first complete version: packet capture (Scapy, BPF for DNS and TCP SYN) with a
 bounded queue; a privilege-separated capture daemon that forwards to the unprivileged

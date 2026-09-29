@@ -65,10 +65,19 @@ def peak_rss_mib() -> float | None:
                     ("PeakPagefileUsage", ctypes.c_size_t),
                 ]
 
+            # Declare the real signatures: without them ctypes passes the process handle as a
+            # 32-bit int, which is not a valid HANDLE on 64-bit Windows and the call fails
+            # (the first version always printed "n/a" there). Private DLL objects, so the global
+            # ctypes.windll prototypes stay untouched.
+            kernel32 = ctypes.WinDLL("kernel32")
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.GetCurrentProcess.argtypes = []
+            get_info = kernel32.K32GetProcessMemoryInfo  # kernel32 export since Windows 7
+            get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            get_info.restype = wintypes.BOOL
             counters = Counters()
             counters.cb = ctypes.sizeof(counters)
-            process = ctypes.windll.kernel32.GetCurrentProcess()
-            if not ctypes.windll.psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
+            if not get_info(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
                 return None
             return round(counters.PeakWorkingSetSize / 2**20, 1)
         import resource
