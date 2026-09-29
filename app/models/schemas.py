@@ -36,7 +36,9 @@ class EventOut(BaseModel):
     domain_source: DomainSource | None
     interface: str | None
     dns_query_type: str | None
-    country: str | None = Field(default=None, description="Destination country code (simulated by default).")
+    country: str | None = Field(
+        default=None, description="Destination country code (DB-IP Lite; simulated in demo mode without it)."
+    )
     country_name: str | None
     risk_score: int = Field(..., ge=0, le=100)
     risk_level: RiskLevel
@@ -143,7 +145,13 @@ class CountryStatsOut(BaseModel):
     description: str
     include_local: bool
     total_events: int
-    simulated: bool = Field(..., description="True when the default simulated geolocator is in use.")
+    simulated: bool = Field(..., description="True when illustrative (simulated) country data is in use.")
+    source: Literal["dbip", "simulated", "mapping", "none"] = Field(
+        ..., description="dbip = DB-IP Lite database; none = no database yet (countries unknown)."
+    )
+    database_month: str | None = Field(default=None, description="Release of the DB-IP database, YYYY-MM.")
+    attribution: str | None = Field(default=None, description="Credit required by the data licence (CC BY 4.0).")
+    attribution_url: str | None = None
     countries: list[CountryStat]
 
 
@@ -206,6 +214,7 @@ class ReloadOut(BaseModel):
     behaviour_windows_reset: bool = Field(
         description="True when the behaviour window length changed, so per-device windows restarted."
     )
+    geolocation: str = Field(default="unchanged", description="Geolocation database in use after the reload.")
 
 
 # ---------------------------------------------------------------------------- metrics

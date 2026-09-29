@@ -39,6 +39,7 @@ dashboard — entirely on your own machine, with no cloud service.
 [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md); plan in [`docs/ROADMAP.md`](docs/ROADMAP.md);
 design in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); decisions in
 [`docs/DECISIONS.md`](docs/DECISIONS.md).
+Field-trial procedure: [`docs/FIELD_TRIAL.md`](docs/FIELD_TRIAL.md).
 
 ---
 
@@ -53,7 +54,7 @@ network are doing, at very low volume:
   handshake completed.
 
 Each observation becomes a normalised **event** (time, device, destination,
-protocol, domain, …). The backend enriches it (blocklist match, simulated
+protocol, domain, …). The backend enriches it (blocklist match, destination
 country, domain inferred from earlier DNS answers), scores it with a
 deterministic risk engine, persists it and pushes it to the dashboard over a
 WebSocket.
@@ -126,7 +127,8 @@ oldest messages. No component busy-waits or polls the database for new events.
 * DNS correlation: a SYN to `142.250.1.1` is labelled with the domain the device
   resolved to that address moments earlier.
 * Local blocklist with parent-domain matching (plain, `*.wildcard` and hosts-file formats).
-* Pluggable geolocation (`GeoLocator` protocol); default is **simulated**.
+* Real country data from the free DB-IP Lite database, downloaded and updated automatically
+  (simulated only in demo mode without it).
 * Transparent, deterministic risk engine with 13 documented signals.
 * SQLite storage with indexes, automatic schema creation and retention (a row limit, plus an optional age limit).
 * FastAPI REST API with pagination/filtering, OpenAPI docs at `/docs` and `/redoc`.
@@ -213,13 +215,16 @@ silently change the bind address):
 | `BPF_FILTER` | `HOUND_BPF_FILTER` | `udp port 53 or tcp port 53 or (tcp[tcpflags] & tcp-syn != 0)` |
 | `DEPLOYMENT_POSITION` | `HOUND_DEPLOYMENT_POSITION` | `auto` — where Hound captures: `this_computer`, `gateway`, `mirror`, `dns_server` (§9) |
 | `BLOCKLIST_PATH` | `HOUND_BLOCKLIST_PATH` | `config/blocklist.txt` |
+| `GEO_MODE` | `HOUND_GEO_MODE` | `auto` — DB-IP Lite when downloaded; `simulated` only for demos |
+| `GEOIP_AUTO_UPDATE` | `HOUND_GEOIP_AUTO_UPDATE` | `true` — download the DB-IP database monthly (from download.db-ip.com) |
 | `RETENTION_MAX_EVENTS` | `HOUND_RETENTION_MAX_EVENTS` | `250000` — the oldest events beyond this are deleted |
 | `RETENTION_DAYS` | `HOUND_RETENTION_DAYS` | unset — also delete events older than this many days (1–3650) |
 | `LOG_LEVEL` | `HOUND_LOG_LEVEL` | `INFO` |
 
 Other useful settings (full list with comments in `.env.example`):
 `HOUND_ALLOWED_HOSTS`, `HOUND_API_URL`, `HOUND_INGEST_TOKEN`,
-`HOUND_ALLOWLIST_PATH`, `HOUND_GEO_MODE` (`simulated` | `mapping_only`), `HOUND_GEO_RANGES_PATH`,
+`HOUND_ALLOWLIST_PATH`, `HOUND_GEO_MODE` (`auto` | `dbip` | `simulated` | `mapping_only`),
+`HOUND_GEOIP_DIR`, `HOUND_GEOIP_AUTO_UPDATE`, `HOUND_GEO_RANGES_PATH`,
 `HOUND_TRUSTED_DNS_SERVERS`,
 `HOUND_QUEUE_MAX_SIZE`, `HOUND_LOG_FORMAT` (`text` | `json`),
 `HOUND_RISK_CONFIG_PATH` and the `HOUND_RISK_*` thresholds (see *Risk settings*
@@ -291,6 +296,28 @@ it upgrades the file on start-up, one atomic step at a time, keeping your data. 
 created before versioning existed are recognised and adopted. Hound refuses to start —
 without touching the file — on a database written by a *newer* Hound, or on a file that
 isn't a Hound database.
+
+**Where countries come from.** Hound uses the free **DB-IP "IP to Country Lite"**
+database ([IP Geolocation by DB-IP](https://db-ip.com), CC BY 4.0). You do not
+have to do anything: when the server starts it downloads the current month's file
+(about 8 MB) into `data/geoip/`, checks it, and switches to it without a restart;
+afterwards it checks hourly and fetches the new release once a month. Nothing else
+is ever sent — it is one HTTPS download from `download.db-ip.com`, which sees your
+public IP address like any website would.
+
+```bash
+python run.py geo status     # which database is installed
+python run.py geo update     # download the latest now (then: python run.py reload)
+```
+
+* No internet, or you'd rather not? Set `HOUND_GEOIP_AUTO_UPDATE=false` and run
+  `python run.py geo update` when you want (or copy a `dbip-country-lite-YYYY-MM.mmdb`
+  file into `data/geoip/`). Without a database, countries show as *Unknown* —
+  Hound never invents them outside demo mode.
+* Behind a proxy, the download honours `HTTPS_PROXY`. If it keeps failing,
+  `python run.py doctor` says so and the dashboard's Countries tab says
+  "no geolocation database yet".
+* Accuracy: country-level, approximate (see §19).
 
 **How long data is kept.** Hound keeps the newest `HOUND_RETENTION_MAX_EVENTS`
 events (250 000 by default) and, if you set `HOUND_RETENTION_DAYS`, deletes
@@ -622,7 +649,8 @@ Open <http://127.0.0.1:8000>.
 * **Downloads** – *Download CSV / JSON* on the live feed exports every stored
   event matching the feed's risk filter; the Devices tab exports all devices.
 * **Countries** – bar chart and table of the share of events by destination
-  country (simulated geolocation), optionally including the local network.
+  country (DB-IP Lite; the *IP Geolocation by DB-IP* credit is shown there),
+  optionally including the local network.
 
 Updates arrive over the WebSocket and are applied in small batches; if the
 socket drops, the page shows *reconnecting*, polls the REST API every 5 s as a
@@ -748,7 +776,9 @@ hound/
 │   │   └── repositories.py    # all SQL queries
 │   ├── enrichment/
 │   │   ├── blocklist.py       # file-based domain reputation
-│   │   ├── geo.py             # GeoLocator protocol + simulated implementation
+│   │   ├── geo.py             # GeoLocator protocol, source selection, simulated demo data
+│   │   ├── geoip.py           # DB-IP Lite database: reader, safe download, updater
+│   │   ├── countries.py       # ISO country names
 │   │   ├── dns_cache.py       # bounded IP→domain cache
 │   │   └── service.py         # EnrichmentService
 │   ├── frontend/
@@ -855,9 +885,11 @@ hound/
 
 ## 19. Limitations
 
-* **Geolocation is simulated** by default: `config/geo_ranges.csv` is
-  illustrative and unknown addresses get a deterministic pseudo-random country.
-  Do not treat country data as authoritative.
+* **Countries are approximate.** DB-IP Lite is a free, country-level database
+  (DB-IP states ~81 % accuracy); VPNs, cloud providers and anycast services
+  (e.g. 1.1.1.1) are placed where their address is registered, not where you
+  connect. Until the database is downloaded, countries show as *Unknown*. Demo
+  mode without a database uses illustrative, **simulated** data.
 * **Risk scores are heuristics.** They surface indicators associated with
   elevated risk; false positives (e.g. CDN hostnames with random-looking labels)
   and false negatives are expected — use the allowlist (§8) for ones you have
@@ -880,21 +912,6 @@ hound/
 
 ## 20. Future improvements
 
-* Real GeoIP backend (e.g. MaxMind GeoLite2) implementing `GeoLocator`:
-
-  ```python
-  class MaxMindGeoLocator:
-      def __init__(self, path: str) -> None:
-          import geoip2.database
-          self._reader = geoip2.database.Reader(path)
-      def locate(self, ip: str) -> str | None:
-          try:
-              return self._reader.country(ip).country.iso_code
-          except Exception:
-              return None
-  ```
-
-  and return it from `build_geolocator()`.
 * Scheduled blocklist updates from public feeds.
 * MAC-address/DHCP-based device identity and friendly device names.
 * TLS SNI extraction to label HTTPS connections without DNS visibility.
@@ -909,3 +926,7 @@ Hound is released under the [MIT License](LICENSE). Its dependencies keep their 
 licences — most are permissive (MIT, BSD, Apache-2.0, MPL-2.0); Scapy, used for packet
 capture and parsing, is GPL-2.0-only. Hound only imports the packages you install
 from PyPI and does not ship them.
+
+Country data: [IP Geolocation by DB-IP](https://db-ip.com), licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Hound downloads the
+"IP to Country Lite" database from db-ip.com; it is not part of this repository.

@@ -5,19 +5,21 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (session 17: 17c retention by age + device consistency)
+Last updated:      2026-09-29 (session 18: 16f real geolocation, owner request)
 Current milestone: M7 — Field-validated (M0–M6 reached; M2 on Linux + Windows)
-Current phase:     Phase 17 — Data lifecycle (17a, 17b, 17c done; 17d next). Phase 16:
-                   16e done; 16d field trial planned by the owner for the week of 2026-10-05
+Current phase:     Phase 16 — 16a–16c, 16e, 16f done; 16d field trial next (owner, week
+                   of 2026-10-05, laptop-only position; procedure in docs/FIELD_TRIAL.md).
+                   Phase 17: 17a–17c done, 17d open
 Current task:      none in progress
-Next task:         17d periodic PRAGMA optimize
-Overall state:     Hound 1.0.0 (MIT) + unreleased 16e, 17b, 17c: capture (split mode,
-                   Linux + Windows), enrichment, explainable risk with allowlist and a
-                   tunable, reloadable risk file, API, live dashboard with coverage line
-                   and downloads, CSV/JSON export, retention by count and age, metrics,
-                   doctor, backup/restore, benchmark. Linux: 479 tests pass (Py 3.11 +
-                   3.13, from the lock). Owner: Windows 369 passed + 5 skipped (before
-                   the logging fix); CI green.
+Next task:         17d periodic PRAGMA optimize (engineering); 16d is the owner's
+Overall state:     Hound 1.0.0 (MIT) + unreleased 16e, 16f, 17b, 17c: capture (split mode,
+                   Linux + Windows), enrichment with real countries (DB-IP Lite, automatic
+                   monthly download), explainable risk with allowlist and a tunable,
+                   reloadable risk file, API, live dashboard with coverage line and
+                   downloads, CSV/JSON export, retention by count and age, metrics,
+                   doctor, backup/restore, benchmark. Linux: 519 tests pass (Py 3.11 +
+                   3.13, from the lock). A real DB-IP download is NOT verified yet (the
+                   sandbox blocks download.db-ip.com) — the owner's first start is.
 ```
 
 ## 1. Baseline assessment
@@ -33,11 +35,12 @@ Event model     VERIFIED        Frozen Pydantic NetworkEvent; used by all source
 Backend         VERIFIED        Worker thread, retention, error isolation, broadcaster
 Database        VERIFIED        WAL, indexes, retention by count + optional age (devices follow); schema v1 in PRAGMA user_version with
                                 ordered atomic migrations (ADR-018); owner-only files on POSIX
-Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS correlation
+Enrichment      VERIFIED*       Blocklist (suffix matching), DB-IP Lite countries (real file not
+                                yet downloaded in any test environment), DNS correlation
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        16 page-level tests against the real API (dashboard.py 96 %);
                                 visuals checked manually (coverage line: screenshots s15)
-Testing         VERIFIED*       479 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       519 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -52,6 +55,15 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-29 s18 | Data source facts (web): DB-IP Country Lite — CC BY 4.0, monthly, CSV + MMDB, `download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz`, ~717 k records; MaxMind GeoLite2 needs account + key and 30-day deletion | db-ip.com, dev.maxmind.com | owner chose DB-IP Lite with automatic download |
+| 2026-09-29 s18 | `maxminddb` 3.2.0: licence, Python, wheels | PyPI | Apache-2.0, Python ≥ 3.10, wheels for win_amd64 and macOS arm64 (cp311, cp313) and Linux; locks regenerated — only `maxminddb` added; `pip-audit` on the runtime lock: no known vulnerabilities |
+| 2026-09-29 s18 | Real download from the sandbox | Linux | **blocked** by the sandbox's egress policy (403 at the proxy) → not verified here; the server logged one warning, kept running with countries *Unknown*, left no partial file, and did not retry within the 6 h window |
+| 2026-09-29 s18 | Test `.mmdb` writer (`tests/mmdb.py`) against the real reader | maxminddb C extension + pure Python (MODE_AUTO/MEMORY/FILE) | first version rejected by the C reader (metadata integer types) → typed metadata; then identical lookups in all modes |
+| 2026-09-29 s18 | `tests/test_benchmark.py` in the full suite | Linux | **caught** the benchmark creating `data/geoip` in the project (its runtime started the updater with auto-download) → benchmark now never downloads (uses an installed database read-only, reports the source) |
+| 2026-09-29 s18 | Mutation check (15: no unpacked-size cap, no download cap, truncation undetected, no sanity lookups, live falls back to simulated, no retry window, replaced reader not closed, reload ignores geo, no attribution in API, credit never shown, no staleness warning, any host allowed, old files kept, partial file kept) — each under `timeout` | Py 3.11 | 14/15 at first: the unpacked-size check survived because the final `flush()` check also caught the test bomb — but `flush()` inflates everything at once; test changed to stream in 8-byte chunks → 15/15 |
+| 2026-09-29 s18 | **Real server** (idle, default settings): no database → one blocked download attempt; test database copied into `data/geoip`; `python run.py reload`; 4 events ingested | Linux | countries API `source=dbip`, month 2026-09, credit present, `simulated=false`; Portugal 2, United States 1, Unknown 1 (as in the test database); `geo status` and `doctor` "[ OK ] Geolocation DB-IP Lite 2026-09 (8.8.8.8 -> US)"; Chromium screenshot: Countries tab note + "IP Geolocation by DB-IP" link |
+| 2026-09-29 s18 | Lookup speed, 100 k random IPv4 | Py 3.11 | `.mmdb` (C extension): ~93 k lookups/s vs simulated ~39 k/s — no pipeline impact (~5.5 k events/s) |
+| 2026-09-29 s18 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy 2.3.1 ×3 platforms + 3.11 lock; compileall; smoke (demo, no database: simulated, nothing created in `data/`) | Linux | 519 / 519 / 519 passed; clean; smoke all passed; 0 ResourceWarnings in `test_geoip.py` |
 | 2026-09-29 s17 | Baseline: `pytest`; no file newer than the last delivered zip | Linux, Py 3.11 | 459 passed |
 | 2026-09-29 s17 | **Bug reproduced before the fix**: `EventRepository.prune` made to raise "database is locked", 50 single-event batches | Py 3.11 | all 50 stored, yet `failed=1`, "Database write failed; batch dropped" logged (pruning ran inside `save()` after the commit) → pruning moved to worker housekeeping; regression test passes |
 | 2026-09-29 s17 | Test expectations for the age/count scenarios | Py 3.11 | two hand-computed expectations were wrong (a boundary event at exactly 7 days is kept; the count limit runs before the age limit) — corrected the tests, not the code, after re-deriving them |
@@ -347,26 +359,34 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   `storage.retention_days`, `retention_pruned_devices`. 20 new tests
   (`tests/test_retention.py`), mutation-checked.
 
+- **16f Real geolocation (session 18, ADR-029, owner request):** DB-IP "IP to Country
+  Lite" (`.mmdb`, CC BY 4.0) read with `maxminddb` (new dependency); downloaded
+  automatically at start and monthly by `GeoIpUpdater` (HTTPS to download.db-ip.com only,
+  size caps, validation, atomic install, hot swap under the batch lock);
+  `python run.py geo status|update`; `reload` picks up new files; `HOUND_GEO_MODE=auto`
+  (default): no invented countries in live use; countries API `source` + credit;
+  dashboard credit link; `doctor` *Geolocation* check; all ISO country names;
+  `.env.example` no longer pins `simulated`. 42 new tests (`tests/test_geoip.py` 41,
+  dashboard 1), mutation-checked. Field-trial procedure written: `docs/FIELD_TRIAL.md`.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **17d Periodic `PRAGMA optimize`.** Run SQLite's `PRAGMA optimize` from the same
-   housekeeping hook (at start and e.g. hourly) so the query planner's statistics follow
-   the data as it grows and is pruned; measure the effect on `/api/stats` and the
-   coverage/export queries at 250 k rows before and after. Unblocked.
-2. 16d field trial + tuning (owner: week of 2026-10-05). Before starting: set
-   `HOUND_DEPLOYMENT_POSITION` (and, if wanted, `HOUND_RETENTION_DAYS`) in `.env`; check
-   the coverage line after ~15 minutes; review flagged events with
-   `/api/export/events?min_risk_level=suspicious` (CSV).
-3. Owner: re-run `pytest` (expect 470 passed, 5 skipped on Windows — 4 Linux-only
-   folder-name cases are not generated and 5 POSIX file-mode tests are skipped) and
-   `python scripts/benchmark.py` (peak memory should now show a number).
+1. **17d Periodic `PRAGMA optimize`** (engineering, unblocked): run it from the
+   housekeeping hook (start + hourly) and measure `/api/stats`, coverage and export
+   queries at 250 k rows before/after.
+2. **Owner, before the trial:** install the new zip, `pip install -r requirements.lock`
+   (new `maxminddb`), **remove `HOUND_GEO_MODE=simulated` from `.env`**, start the server
+   once and check `python run.py geo status` — the first real DB-IP download. Then
+   `pytest` (expect 510 passed, 5 skipped on Windows).
+3. **16d field trial** (owner, week of 2026-10-05) — follow `docs/FIELD_TRIAL.md`.
 4. Test debt: close the SQLite connections in `tests/test_migrations.py` helpers (§7).
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
 |---|---|---|
+| First real DB-IP download | The owner's machine (the dev sandbox cannot reach download.db-ip.com) | confirming 16f end to end |
 | Field trial | A monitoring position that sees household traffic (router, mirror port or DNS host); owner plans it for the week of 2026-10-05 | M7 |
 | Benchmark re-run on Windows | `python scripts/benchmark.py` once more, to confirm the peak-memory fix (Windows-only code path, untested here) | nothing (informational) |
 
@@ -404,7 +424,7 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 - The dashboard's *Devices* tile counts every address in the device table; the coverage
   check counts only local IPv4 addresses from the last 24 h. Both are correct for what
   they say, but the two numbers can differ; the coverage dialog states its own basis.
-- The test suite now takes ~35–60 s here (479 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
+- The test suite now takes ~35–60 s here (519 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
   of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
 - The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,
@@ -420,7 +440,11 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   changes (ADR-018).
 
 ## 8. Known limitations (product)
-- Country data is **simulated** (ADR-008).
+- Countries are approximate: DB-IP Lite, country level (DB-IP states ~81 % accuracy);
+  anycast/VPN/cloud addresses show where they are registered. *Unknown* until the first
+  download succeeds; simulated only in demo mode.
+- Hound makes one outbound HTTPS request per month (download.db-ip.com) unless
+  `HOUND_GEOIP_AUTO_UPDATE=false`.
 - Only traffic visible to the capture interface is seen (switched/Wi-Fi networks); what
   each deployment position sees is now stated in the product (ADR-026). The coverage
   check is a heuristic: VMs, containers and inbound connections add addresses, and a

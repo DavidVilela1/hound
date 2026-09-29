@@ -15,6 +15,9 @@ SQLAlchemy>=2.0.30,<3
 #   Linux: libpcap (e.g. apt install libpcap0.8)  macOS: built in  Windows: Npcap
 scapy>=2.6,<3
 
+# --- Enrichment ------------------------------------------------------------------
+maxminddb>=2.6,<4       # reads the DB-IP Lite country database (.mmdb); ADR-029
+
 # --- Frontend (dashboard) ------------------------------------------------------
 nicegui>=3.0,<4
 httpx>=0.27,<1          # dashboard -> REST API client (also used by the tests)

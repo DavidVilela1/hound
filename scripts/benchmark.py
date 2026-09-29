@@ -163,8 +163,12 @@ def run(rows: int, packets: int, seed: int, repeat: int, samples: dict[int, int]
             allowed_hosts="testserver",
             retention_max_events=max(rows * 2, 1_000),  # no pruning while filling
             enable_dashboard=False,
+            # Use an installed DB-IP file if there is one (read-only), so lookups are measured
+            # as in real use; never download anything from a benchmark.
+            geoip_auto_update=False,
         )
         runtime = HoundRuntime(settings)
+        result["environment"]["geolocation"] = runtime.geo_description()
         with TestClient(create_app(settings, runtime)) as client:
             # 2. processing at several batch sizes ---------------------------------------
             processing = []
@@ -262,6 +266,7 @@ def render(result: dict[str, Any]) -> str:
     env, capture = result["environment"], result["capture"]
     lines = [
         f"Hound {env['hound']} benchmark - Python {env['python']}, {env['platform']}, {env['cpus']} CPUs",
+        f"Geolocation: {env['geolocation']}",
         "",
         f"Scapy dissection          {capture['dissect_packets_per_s']:>9,} packets/s  ({capture['packets']:,} frames)",
         f"Parsing to events         {capture['parse_packets_per_s']:>9,} packets/s",

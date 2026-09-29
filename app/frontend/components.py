@@ -158,7 +158,7 @@ def event_details(container: ui.element, event: dict[str, Any]) -> None:
                     ),
                 ),
                 ("DNS query type", event.get("dns_query_type") or EMPTY),
-                ("Country (simulated)", event.get("country_name") or EMPTY),
+                ("Country", event.get("country_name") or EMPTY),
                 ("Blocklist match", event.get("blocklist_match") or EMPTY),
                 ("Interface", event.get("interface") or EMPTY),
             ]

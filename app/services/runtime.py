@@ -25,7 +25,8 @@ from app.database.engine import Database
 from app.enrichment.allowlist import Allowlist
 from app.enrichment.blocklist import Blocklist
 from app.enrichment.dns_cache import ResolutionCache
-from app.enrichment.geo import build_geolocator, load_ranges
+from app.enrichment.geo import GeoSelection, load_ranges, select_geolocator
+from app.enrichment.geoip import GeoIpUpdater, MmdbGeoLocator
 from app.enrichment.service import EnrichmentService
 from app.ingestion.queue import EventQueue
 from app.ingestion.sources import EventSource
@@ -85,10 +86,10 @@ class HoundRuntime:
         self.broadcaster = EventBroadcaster(settings.ws_client_queue_size)
 
         self.blocklist = Blocklist.from_file(settings.resolve_path(settings.blocklist_path))
-        geolocator = build_geolocator(settings.geo_mode, settings.resolve_path(settings.geo_ranges_path))
+        self.geo = select_geolocator(settings, demo=mode is RunMode.DEMO)
         self.enrichment = EnrichmentService(
             self.blocklist,
-            geolocator,
+            self.geo.locator,
             ResolutionCache(settings.dns_cache_size, timedelta(seconds=settings.dns_cache_ttl_seconds)),
             Allowlist.from_file(settings.resolve_path(settings.allowlist_path)),
         )
@@ -109,7 +110,16 @@ class HoundRuntime:
             flush_interval=settings.flush_interval_seconds,
             housekeeping=self.store.prune_if_due,
         )
-        self.events = EventQueryService(self.database, geo_simulated=settings.geo_mode == "simulated")
+        self.events = EventQueryService(self.database, geo=lambda: self.geo)
+        self._geo_lock = threading.Lock()
+        self.geo_updater: GeoIpUpdater | None = None
+        if settings.geo_mode in ("auto", "dbip") and mode is not RunMode.DEMO:
+            self.geo_updater = GeoIpUpdater(
+                settings.resolve_path(settings.geoip_dir),
+                auto_download=settings.geoip_auto_update,
+                loaded=lambda: self.geo.database.path if self.geo.database else None,
+                use=self.use_geo_database,
+            )
         self.devices = DeviceQueryService(self.database)
         self.stats = StatsService(self.database, self.pipeline_status)
         self.export = ExportService(self.database)
@@ -133,6 +143,8 @@ class HoundRuntime:
         if loop is not None:
             self.broadcaster.bind_loop(loop)
         self.processor.start()
+        if self.geo_updater is not None:
+            self.geo_updater.start()  # background: a slow download never delays start-up
         self._started_at = datetime.now(UTC)
         try:
             self._source = self._build_source()
@@ -149,9 +161,13 @@ class HoundRuntime:
                 self._source.stop()
             except Exception:
                 logger.exception("Error stopping event source")
+        if self.geo_updater is not None:
+            self.geo_updater.stop()
         self.processor.stop()
         self.broadcaster.unbind()
         self.database.dispose()
+        if isinstance(self.geo.locator, MmdbGeoLocator):
+            self.geo.locator.close()
         logger.info("Hound runtime stopped")
 
     def _build_source(self) -> EventSource | None:
@@ -225,6 +241,24 @@ class HoundRuntime:
             started_at=self._started_at,
         )
 
+    def use_geo_database(self, locator: MmdbGeoLocator) -> None:
+        """Switch to ``locator`` between two batches, then close the database it replaces."""
+        with self._geo_lock:
+            old = self.geo
+            self.processor.reconfigure(lambda: self.enrichment.update_geolocator(locator))
+            self.geo = GeoSelection(locator, "dbip", locator.info)
+        if isinstance(old.locator, MmdbGeoLocator):
+            old.locator.close()
+        logger.info("Geolocation database in use", extra={"file": locator.info.path.name})
+
+    def geo_description(self) -> str:
+        geo = self.geo
+        if geo.database is not None:
+            return f"DB-IP Lite {geo.database.month}"
+        return {"simulated": "simulated", "mapping": "illustrative table", "none": "none (countries unknown)"}[
+            geo.source
+        ]
+
     def reload_detection_config(self) -> ReloadOut:
         """Re-read the blocklist, allowlist and risk settings and apply them (16c, ADR-023).
 
@@ -247,6 +281,8 @@ class HoundRuntime:
 
         self.processor.reconfigure(apply)
         self.blocklist = blocklist
+        if self.geo_updater is not None:  # a file from `python run.py geo update` is picked up now
+            self.geo_updater.refresh_from_disk()
         result = ReloadOut(
             reloaded_at=datetime.now(UTC),
             blocklist_entries=len(blocklist),
@@ -255,6 +291,7 @@ class HoundRuntime:
             risk_values_from_file=file_value_count(file_values),
             risk_overridden_by_environment=sorted(explicit_environment(settings)),
             behaviour_windows_reset=windows_reset,
+            geolocation=self.geo_description(),
         )
         logger.info("Detection settings reloaded", extra=result.model_dump(mode="json"))
         return result

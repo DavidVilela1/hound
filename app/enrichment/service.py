@@ -35,6 +35,10 @@ class EnrichmentService:
         self._reputation = reputation
         self._allowlist = allowlist
 
+    def update_geolocator(self, geolocator: GeoLocator) -> None:
+        """Swap the geolocation source (a newer DB-IP file, ADR-029)."""
+        self._geo = geolocator
+
     def observe_dns_response(self, event: NetworkEvent) -> None:
         """Remember ``answer IP → queried domain`` from a DNS response."""
         if event.packet_type is not PacketType.DNS_RESPONSE or not event.domain:

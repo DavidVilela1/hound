@@ -1,13 +1,14 @@
 """IP → country resolution behind a small, replaceable interface.
 
-.. warning::
-   The default implementation is **simulated**. It combines an illustrative
-   CIDR mapping file (``config/geo_ranges.csv``) with a deterministic hash for
-   addresses the file does not cover. Its output is **not authoritative** and
-   must not be used to draw real conclusions about where traffic goes.
+Real data comes from the DB-IP Lite database (:mod:`app.enrichment.geoip`, ADR-029).
+:func:`select_geolocator` picks the source from ``HOUND_GEO_MODE``:
 
-To use real data, implement :class:`GeoLocator` (e.g. backed by a MaxMind
-GeoLite2 database) and return it from :func:`build_geolocator`.
+* ``auto`` (default) / ``dbip``: the newest installed DB-IP file. Without one, live modes
+  report countries as unknown — never invented — and demo mode (``auto`` only) falls
+  back to the simulation.
+* ``simulated``: an illustrative CIDR table (``config/geo_ranges.csv``) plus a
+  deterministic hash — **not authoritative**, for demos and tests.
+* ``mapping_only``: the illustrative table alone.
 """
 
 from __future__ import annotations
@@ -17,14 +18,19 @@ import hashlib
 import ipaddress
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
-from app.core.netutils import is_public_address
+from app.core.netutils import is_public_address, is_valid_ip
+from app.enrichment.countries import ISO_COUNTRY_NAMES
+from app.enrichment.geoip import LOCAL_NETWORK, GeoDatabaseInfo, GeoIpError, MmdbGeoLocator, installed_databases
+
+if TYPE_CHECKING:
+    from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-LOCAL_NETWORK = "LAN"
 UNKNOWN = "UNKNOWN"
 
 COUNTRY_NAMES: dict[str, str] = {
@@ -79,7 +85,7 @@ Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 def country_name(code: str | None) -> str:
     if not code:
         return COUNTRY_NAMES[UNKNOWN]
-    return COUNTRY_NAMES.get(code, code)
+    return COUNTRY_NAMES.get(code) or ISO_COUNTRY_NAMES.get(code, code)
 
 
 class GeoLocator(Protocol):
@@ -164,8 +170,47 @@ class SimulatedGeoLocator:
         return self._pool[int.from_bytes(digest, "big") % len(self._pool)]
 
 
+class LocalOnlyGeoLocator:
+    """No database: local addresses are ``"LAN"``, everything else unknown."""
+
+    def locate(self, ip: str) -> str | None:
+        if not is_valid_ip(ip):
+            return None
+        return None if is_public_address(ip) else LOCAL_NETWORK
+
+
+GeoSource = Literal["dbip", "simulated", "mapping", "none"]
+
+
+@dataclass(frozen=True, slots=True)
+class GeoSelection:
+    locator: GeoLocator
+    source: GeoSource
+    database: GeoDatabaseInfo | None = None
+
+
+def select_geolocator(settings: Settings, *, demo: bool) -> GeoSelection:
+    """The geolocator for this run (the runtime may swap in newer DB-IP files later)."""
+    ranges = settings.resolve_path(settings.geo_ranges_path)
+    if settings.geo_mode == "simulated":
+        return GeoSelection(build_geolocator("simulated", ranges), "simulated")
+    if settings.geo_mode == "mapping_only":
+        return GeoSelection(build_geolocator("mapping_only", ranges), "mapping")
+    for path in installed_databases(settings.resolve_path(settings.geoip_dir)):
+        try:
+            locator = MmdbGeoLocator.open(path)
+        except GeoIpError as exc:
+            logger.error("Skipping unusable geolocation database", extra={"error": str(exc)})
+            continue
+        logger.info("Geolocation database loaded", extra={"file": path.name, "source": "DB-IP Lite"})
+        return GeoSelection(locator, "dbip", locator.info)
+    if demo and settings.geo_mode == "auto":
+        return GeoSelection(build_geolocator("simulated", ranges), "simulated")
+    return GeoSelection(LocalOnlyGeoLocator(), "none")
+
+
 def build_geolocator(mode: str, ranges_path: Path) -> GeoLocator:
-    """Factory used by the runtime; swap in a real implementation here."""
+    """Illustrative locators (``simulated`` / ``mapping_only``) from the CIDR table."""
     static = StaticRangeGeoLocator(load_ranges(ranges_path))
     if mode == "mapping_only":
         return static

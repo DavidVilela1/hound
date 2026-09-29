@@ -29,7 +29,7 @@ from app.core.privileges import is_privileged as _is_privileged
 
 logger = logging.getLogger("hound")
 
-COMMANDS = ("serve", "capture", "interfaces", "doctor", "reload", "backup", "restore")
+COMMANDS = ("serve", "capture", "interfaces", "doctor", "reload", "backup", "restore", "geo")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,6 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     restore = sub.add_parser("restore", help="Replace the database with a backup (Hound must be stopped).")
     restore.add_argument("backup", help="The backup file to restore.")
+
+    geo = sub.add_parser("geo", help="Geolocation database (DB-IP Lite): show it, or download the latest now.")
+    geo.add_argument("action", choices=("status", "update"), help="status: what is installed; update: download now.")
     return parser
 
 
@@ -230,6 +233,7 @@ def cmd_reload(args: argparse.Namespace, settings: Settings) -> int:
         f"{result['risk_values_from_file']} risk setting(s) from the file"
         + (f"; overridden by environment: {', '.join(overridden)}" if overridden else "")
         + ("; behaviour windows restarted (window length changed)" if result.get("behaviour_windows_reset") else "")
+        + (f"; geolocation: {result['geolocation']}" if result.get("geolocation") else "")
         + "."
     )
     return 0
@@ -260,6 +264,38 @@ def cmd_backup(args: argparse.Namespace, settings: Settings) -> int:
         f"Backup written: {result.path} ({result.size_bytes / 2**20:.1f} MiB, "
         f"{result.info.events or 0:,} events, schema v{result.info.version}, integrity ok, {result.seconds} s)"
     )
+    return 0
+
+
+def cmd_geo(args: argparse.Namespace, settings: Settings) -> int:
+    from app.enrichment.geoip import ATTRIBUTION, GeoIpError, MmdbGeoLocator, download_dbip, installed_databases
+
+    directory = settings.resolve_path(settings.geoip_dir)
+    if args.action == "update":
+        print("Downloading the DB-IP Lite country database from download.db-ip.com ...")
+        try:
+            info = download_dbip(directory, datetime.now(UTC).date())
+        except GeoIpError as exc:
+            print(f"Update failed: {exc}", file=sys.stderr)
+            return 2
+        print(f"Installed {info.path} (DB-IP Lite {info.month}, built {info.built:%Y-%m-%d}).")
+        print("A running server switches to it within an hour, or at once with: python run.py reload")
+        print(f"Data licence: CC BY 4.0 - {ATTRIBUTION} (https://db-ip.com)")
+        return 0
+    installed = installed_databases(directory)
+    if not installed:
+        mode = "Hound downloads it at start" if settings.geoip_auto_update else "automatic download is off"
+        print(f"No geolocation database in {directory} ({mode}). Get it now: python run.py geo update")
+        return 1
+    try:
+        locator = MmdbGeoLocator.open(installed[0])
+    except GeoIpError as exc:
+        print(f"{installed[0]} is not usable: {exc}. Run: python run.py geo update", file=sys.stderr)
+        return 2
+    locator.close()
+    info = locator.info
+    print(f"{info.path} - DB-IP Lite {info.month}, built {info.built:%Y-%m-%d} ({info.database_type})")
+    print(f"Automatic monthly update: {'on' if settings.geoip_auto_update else 'off'}; mode: {settings.geo_mode}")
     return 0
 
 
@@ -318,6 +354,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_backup(args, settings)
         if args.command == "restore":
             return cmd_restore(args, settings)
+        if args.command == "geo":
+            return cmd_geo(args, settings)
         return cmd_serve(args, settings)
     except KeyboardInterrupt:
         return 130

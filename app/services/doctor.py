@@ -24,6 +24,7 @@ import sys
 import urllib.error
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -385,6 +386,58 @@ def check_ingest_token(settings: Settings, platform: str = sys.platform) -> Chec
     return Check("Ingest token", Status.OK, f"{path}")
 
 
+def check_geolocation(settings: Settings, today: date | None = None) -> Check:
+    """Which country data Hound will use, and whether it is current (read-only, ADR-029)."""
+    from app.enrichment.geoip import (
+        STALE_AFTER_DAYS,
+        GeoIpError,
+        MmdbGeoLocator,
+        installed_databases,
+    )
+
+    name = "Geolocation"
+    if settings.geo_mode in ("simulated", "mapping_only"):
+        return Check(
+            name,
+            Status.WARN,
+            f"HOUND_GEO_MODE={settings.geo_mode}: illustrative country data, not real",
+            "Remove HOUND_GEO_MODE (default auto) to use the DB-IP Lite database.",
+        )
+    installed = installed_databases(settings.resolve_path(settings.geoip_dir))
+    if not installed:
+        if settings.geoip_auto_update:
+            return Check(
+                name,
+                Status.INFO,
+                "no DB-IP database yet; the server downloads it at start (needs access to download.db-ip.com), "
+                "or run: python run.py geo update",
+            )
+        return Check(
+            name,
+            Status.WARN,
+            "no DB-IP database and automatic download is off: countries will show as unknown",
+            "Run: python run.py geo update (or set HOUND_GEOIP_AUTO_UPDATE=true).",
+        )
+    try:
+        locator = MmdbGeoLocator.open(installed[0])
+    except GeoIpError as exc:
+        return Check(name, Status.WARN, str(exc), "Run: python run.py geo update")
+    sample = locator.locate("8.8.8.8")
+    locator.close()
+    info = locator.info
+    detail = f"DB-IP Lite {info.month} (8.8.8.8 -> {sample})"
+    today = today or datetime.now(UTC).date()
+    year, month = (int(part) for part in info.month.split("-")) if info.month[:4].isdigit() else (1970, 1)
+    if (today - date(year, month, 1)).days > STALE_AFTER_DAYS:
+        return Check(
+            name,
+            Status.WARN,
+            f"{detail} is out of date",
+            "Run: python run.py geo update (automatic updates may be blocked by a firewall or proxy).",
+        )
+    return Check(name, Status.OK, detail)
+
+
 def check_risk_settings(settings: Settings) -> Check:
     """The risk settings file parses and combines with the environment into a valid config."""
     from app.risk.config import RiskConfig, RiskConfigError, explicit_environment, file_value_count, load_risk_file
@@ -441,6 +494,7 @@ def run_checks(settings: Settings, interface: str | None = None) -> list[Check]:
         check_database(settings),
         check_ingest_token(settings),
         check_risk_settings(settings),
+        check_geolocation(settings),
         check_deployment_position(settings),
     ]
 

@@ -23,7 +23,8 @@ def get_stats(runtime: RuntimeDep) -> StatsOut:
     summary="Event distribution by destination country",
     description=(
         "Percentages are computed over **events** (stored DNS queries and TCP connection attempts), "
-        "grouped by the country of each event's destination IP. The default geolocator is simulated."
+        "grouped by the country of each event's destination IP. `source` says where country data comes "
+        "from (`dbip`: DB-IP Lite; `none`: no database yet, countries unknown; `simulated`: demo data)."
     ),
 )
 def get_country_stats(

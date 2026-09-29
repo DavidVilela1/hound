@@ -309,7 +309,7 @@ def test_run_checks_is_read_only(settings: Settings, tmp_path: Path) -> None:
     before = snapshot(tmp_path)
     checks = doctor.run_checks(settings.model_copy(update={"port": free_port()}))
     assert [c.name for c in checks][:3] == ["Python", "Packages", "Capture driver"]
-    assert len(checks) == 12
+    assert len(checks) == 13
     assert checks[-1].name == "Deployment position"
     assert snapshot(tmp_path) == before  # no database, token or directory created
     assert not (tmp_path / "hound-test.db").exists()

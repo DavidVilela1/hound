@@ -114,8 +114,15 @@ tested · extension points. File references are to the current code.
   allowlist (info, nothing allowlisted); invalid allowlist lines (warning, skipped);
   broken geolocator (caught, country `None`).
 * **Tests:** `tests/test_enrichment.py`, `tests/test_allowlist.py`.
-* **Extension points:** real GeoIP (`GeoLocator`), multiple reputation feeds (compose
-  `DomainReputation`s).
+* **Geolocation (ADR-029):** `app/enrichment/geoip.py` — `MmdbGeoLocator` (DB-IP Lite
+  `.mmdb` via `maxminddb`), `download_dbip()` (HTTPS from download.db-ip.com only, size
+  caps, validation, atomic install), `GeoIpUpdater` (hourly thread; downloads at most
+  every 6 h when the newest file is older than this month). `geo.select_geolocator()`
+  picks the source at start; `HoundRuntime.use_geo_database()` swaps a newer file in
+  under the batch lock. The countries API reports `source` and the DB-IP credit.
+  Tests: `tests/test_geoip.py` with `.mmdb` files from `tests/mmdb.py`.
+* **Extension points:** a GeoLite2 `.mmdb` would work through the same reader; multiple
+  reputation feeds (compose `DomainReputation`s).
 
 ### 3.6 Risk engine — `app/risk/`
 * **Responsibility:** deterministic, explainable scoring (ADR-009).

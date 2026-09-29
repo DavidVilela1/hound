@@ -16,7 +16,7 @@ change their status or add a "Revisited" note.
 | 005 | Threads for capture/processing, asyncio for API/UI | Accepted |
 | 006 | WebSocket push with REST polling fallback | Accepted |
 | 007 | Dashboard is an API client (NiceGUI mounted on the same server) | Accepted |
-| 008 | Simulated geolocation behind a `GeoLocator` protocol | Accepted |
+| 008 | Simulated geolocation behind a `GeoLocator` protocol | Superseded for live use by ADR-029 |
 | 009 | Additive, deterministic, explainable risk scoring | Accepted |
 | 010 | `HOUND_` prefix for all environment variables | Accepted |
 | 011 | Package named `app`; entry points `run.py`, `python -m app`, `hound` | Accepted (debt) |
@@ -481,3 +481,44 @@ change their status or add a "Revisited" note.
   disagree with every view of the stored data).
 * **Consequences:** a device that returns after being forgotten starts a new row; risk
   observations of a device are not trimmed (they are windowed already).
+
+## ADR-029 — Real geolocation: DB-IP Lite, downloaded automatically
+* **Context:** countries were simulated (ADR-008) even in live use, so the Countries tab
+  and every event's country were invented. The owner asked for real data before the field
+  trial, with no manual steps.
+* **Chosen (owner + 2026-09-29):**
+  * **Data:** DB-IP "IP to Country Lite" (owner's choice) — free, no account, monthly,
+    CC BY 4.0 (credit "IP Geolocation by DB-IP" shown next to country data and in the
+    README). Rejected: MaxMind GeoLite2 (account + licence key, 30-day deletion duty).
+  * **Reader:** `maxminddb` (Apache-2.0, by MaxMind, wheels for Windows/macOS/Linux,
+    pure-Python fallback) — the only new runtime dependency; the `.mmdb` format also
+    lets a GeoLite2 file work later without code changes. Rejected: parsing DB-IP's CSV
+    (~717 k rows into memory at every start) or a home-made `.mmdb` reader.
+  * **Automatic updates (owner: "automatically"):** a background thread checks hourly;
+    when the newest installed file is older than the current month it downloads
+    `https://download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz` (falling back
+    to the previous month early in a month), at most once per 6 hours. Opt-out:
+    `HOUND_GEOIP_AUTO_UPDATE=false`; manual: `python run.py geo update`. No thread in
+    demo mode. Only that host is contacted (checked in code); the system proxy is used.
+  * **Safety of the download:** caps on the compressed (64 MB) and unpacked (256 MB,
+    enforced while streaming, so a decompression bomb never reaches memory) size; a
+    truncated gzip is rejected; the file must open and answer 8.8.8.8 and 1.1.1.1 with
+    a country before it replaces anything; a `.part` file is removed on any failure.
+  * **Swap while running:** versioned file names (`dbip-country-lite-YYYY-MM.mmdb`), so a
+    new file never overwrites an open one (Windows); the new reader is swapped in under
+    the processing batch lock, then the old one is closed and its file removed (best
+    effort). `python run.py reload` also picks up a newer file at once.
+  * **No invented data in live use:** `HOUND_GEO_MODE=auto` (new default) uses DB-IP when
+    installed; without it, countries are *Unknown* in live modes and simulated only in
+    demo mode. `simulated` / `mapping_only` remain for demos and tests. `doctor` warns
+    when illustrative data is configured, when there is no database and downloads are
+    off, and when the database is more than ~2 months old.
+  * `.env.example` no longer sets `HOUND_GEO_MODE=simulated` (a copied `.env` would
+    have kept invented countries); a test guards it.
+* **Consequences:** Hound now makes one outbound HTTPS request a month by default — the
+  first network access that is not capture; documented in the README with the opt-out.
+  Country names for all ISO codes are a static table (`app/enrichment/countries.py`).
+  Not verified against a real DB-IP file from the development sandbox (its egress policy
+  blocks download.db-ip.com); tests use `.mmdb` files written by `tests/mmdb.py` and
+  read by the real reader (C extension and pure Python). The owner's first run is the
+  first real download.

@@ -7,6 +7,12 @@ All notable changes to Hound are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Real country data** (ADR-029): the free DB-IP "IP to Country Lite" database is
+  downloaded automatically at start and refreshed monthly (hot-swapped, no restart);
+  `python run.py geo status|update`; the Countries tab credits "IP Geolocation by DB-IP"
+  (CC BY 4.0) and says where its data comes from; `doctor` checks the database's age.
+  New dependency: `maxminddb` (Apache-2.0). Opt out of downloads with
+  `HOUND_GEOIP_AUTO_UPDATE=false`.
 - **Age limit for stored events** (ADR-028): `HOUND_RETENTION_DAYS` deletes events older
   than that many days, in addition to the row limit. Retention now also runs at start-up
   and every 5 minutes, so an idle server applies it too. `GET /api/metrics` reports
@@ -25,6 +31,11 @@ All notable changes to Hound are recorded here. The format follows
   Hound infers it ("most likely just the computer it runs on").
 
 ### Changed
+- Live modes never show invented countries any more: without a database, countries are
+  *Unknown*; simulated data is used only in demo mode (or with `HOUND_GEO_MODE=simulated`).
+  `.env.example` no longer sets `HOUND_GEO_MODE=simulated` — **remove that line from an
+  existing `.env`** (`python run.py doctor` warns about it).
+- Country names cover every ISO code, not 25.
 - A device's counters now describe the events still stored (retention subtracts what it
   deletes), and a device whose last stored event was deleted is removed.
 

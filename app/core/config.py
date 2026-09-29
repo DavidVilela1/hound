@@ -95,7 +95,15 @@ class Settings(BaseSettings):
     # --- Enrichment -------------------------------------------------------
     blocklist_path: Path = Path("config/blocklist.txt")
     allowlist_path: Path = Path("config/allowlist.txt")
-    geo_mode: Literal["simulated", "mapping_only"] = "simulated"
+    geo_mode: Literal["auto", "dbip", "simulated", "mapping_only"] = Field(
+        default="auto",
+        description="auto: DB-IP database when present (simulated in demo mode without one); "
+        "dbip: DB-IP only; simulated / mapping_only: illustrative data for demos.",
+    )
+    geoip_dir: Path = Path("data/geoip")
+    geoip_auto_update: bool = Field(
+        default=True, description="Download the free DB-IP country database monthly (from download.db-ip.com)."
+    )
     geo_ranges_path: Path = Path("config/geo_ranges.csv")
     dns_cache_size: int = Field(default=10_000, ge=100, le=1_000_000)
     dns_cache_ttl_seconds: int = Field(default=3_600, ge=10, le=86_400)

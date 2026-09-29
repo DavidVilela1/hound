@@ -51,7 +51,7 @@ STATS_MAX_AGE = 10.0
 COVERAGE_SECONDS = 60.0
 DISCLAIMER = (
     "Risk levels summarise indicators associated with elevated risk; they are heuristics, not proof of "
-    "compromise. Country data is simulated unless a real GeoIP source is configured. "
+    "compromise. Countries are approximate (DB-IP Lite database; simulated in demo mode without it). "
     "Only monitor networks you own or are authorised to monitor."
 )
 
@@ -190,6 +190,10 @@ class DashboardPage:
         with ui.row().classes("items-center gap-4"):
             ui.switch("Include local network", on_change=lambda e: self._set_include_local(bool(e.value)))
             self.country_note = ui.label("").classes("hound-muted")
+            # CC BY 4.0: DB-IP asks for this credit wherever its data is shown.
+            self.geo_credit = ui.link("IP Geolocation by DB-IP", "https://db-ip.com", new_tab=True).classes("text-sm")
+            self.geo_credit.props("rel=noopener")
+            self.geo_credit.set_visibility(False)
         ui.label(
             "Share of events by destination country — each event is one DNS query or one TCP connection attempt."
         ).classes("text-subtitle2")
@@ -337,8 +341,17 @@ class DashboardPage:
         self.country_chart.options.clear()
         self.country_chart.options.update(country_chart_options(rows))
         self.country_chart.update()
-        simulated = " · geolocation is SIMULATED (not authoritative)" if payload.get("simulated") else ""
-        self.country_note.set_text(f"{payload.get('total_events', 0):,} events{simulated}")
+        source = payload.get("source")
+        if source == "dbip":
+            where = f" · countries from DB-IP Lite {payload.get('database_month') or ''}".rstrip()
+        elif source == "none":
+            where = (
+                " · no geolocation database yet: Hound downloads it automatically (or run: python run.py geo update)"
+            )
+        else:
+            where = " · geolocation is SIMULATED (not authoritative)"
+        self.country_note.set_text(f"{payload.get('total_events', 0):,} events{where}")
+        self.geo_credit.set_visibility(source == "dbip")
 
     async def _load_coverage(self) -> None:
         self._last_coverage = time.monotonic()

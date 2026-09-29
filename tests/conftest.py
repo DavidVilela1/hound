@@ -94,6 +94,9 @@ def settings(tmp_path: Path, blocklist_file: Path, geo_file: Path) -> Settings:
         risk_config_path=tmp_path / "risk.toml",  # absent: built-in risk defaults, whatever the owner tuned
         deployment_position="auto",  # whatever position the owner's environment states
         geo_ranges_path=geo_file,
+        geo_mode="simulated",  # the illustrative data the tests are written against
+        geoip_dir=tmp_path / "geoip",
+        geoip_auto_update=False,  # tests never reach the internet
         ingest_token_path=tmp_path / ".ingest_token",
         allowed_hosts="testserver,127.0.0.1,localhost",
         flush_interval_seconds=0.05,

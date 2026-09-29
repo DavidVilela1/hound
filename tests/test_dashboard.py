@@ -35,6 +35,7 @@ from app.models.events import PacketType
 from app.services.coverage import IPV6_SYN_MISSED, PROFILES, CoverageService
 from app.services.runtime import HoundRuntime
 from tests.conftest import EventFactory
+from tests.mmdb import dbip_file
 
 ROOT = Path(__file__).resolve().parent.parent
 LAN_DEVICE = "192.168.1.10"
@@ -325,6 +326,30 @@ def test_clicking_a_device_opens_its_profile(settings: Settings, make_event: Eve
             await h.user.should_see(f"Device {quiet}")
             await h.user.should_see("No risk indicators observed for this device.")
             await h.user.should_not_see(f"Device {RISKY_DEVICE}")  # dialog content is replaced, not stacked
+
+    run(scenario)
+
+
+# --------------------------------------------------------------------------- geolocation (ADR-029)
+
+
+def test_country_source_and_db_ip_credit(settings: Settings, make_event: EventFactory) -> None:
+    async def scenario() -> None:
+        async with open_dashboard(settings, make_event) as h:  # the fixture's illustrative data
+            await wait_for(lambda: "SIMULATED" in h.page.country_note.text)
+            assert not h.page.geo_credit.visible
+        real = settings.model_copy(update={"geo_mode": "auto"})
+        dbip_file(real.geoip_dir, "2026-09")
+        async with open_dashboard(real, make_event) as h:
+            await wait_for(lambda: "countries from DB-IP Lite 2026-09" in h.page.country_note.text)
+            assert h.page.geo_credit.visible
+            assert h.page.geo_credit.props["href"] == "https://db-ip.com"
+            await h.user.should_see("IP Geolocation by DB-IP")
+            h.runtime.geo.locator.close()  # type: ignore[attr-defined]
+        unknown = settings.model_copy(update={"geo_mode": "dbip", "geoip_dir": real.geoip_dir / "empty"})
+        async with open_dashboard(unknown, make_event) as h:
+            await wait_for(lambda: "no geolocation database yet" in h.page.country_note.text)
+            assert not h.page.geo_credit.visible
 
     run(scenario)
 

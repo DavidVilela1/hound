@@ -27,7 +27,8 @@ Local API for **Hound**, a home-network monitor.
 * Events are DNS queries and TCP connection attempts (SYN) observed on the network.
 * Risk levels (`safe`, `suspicious`, `dangerous`) reflect *indicators associated with
   elevated risk*; they are not proof of compromise.
-* Country data comes from a **simulated** geolocator by default.
+* Country data comes from the free DB-IP Lite database (IP Geolocation by DB-IP, CC BY 4.0);
+  demo mode without it uses a **simulated** geolocator.
 * Real-time events are available on the `/ws/events` WebSocket.
 """
 

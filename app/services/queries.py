@@ -7,7 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.database.engine import Database
 from app.database.repositories import DeviceRepository, DeviceSort, EventFilter, EventRepository
-from app.enrichment.geo import country_name
+from app.enrichment.geo import GeoSelection, country_name
+from app.enrichment.geoip import ATTRIBUTION, ATTRIBUTION_URL
 from app.models.events import PacketType
 from app.models.risk import RiskLevel
 from app.models.schemas import (
@@ -30,9 +31,9 @@ COUNTRY_BASIS_DESCRIPTION = (
 
 
 class EventQueryService:
-    def __init__(self, database: Database, *, geo_simulated: bool) -> None:
+    def __init__(self, database: Database, *, geo: Callable[[], GeoSelection]) -> None:
         self._db = database
-        self._geo_simulated = geo_simulated
+        self._geo = geo
 
     def list_events(self, flt: EventFilter, *, limit: int, offset: int) -> EventPage:
         with self._db.session() as session:
@@ -50,6 +51,7 @@ class EventQueryService:
         with self._db.session() as session:
             rows = EventRepository(session).country_distribution(include_local=include_local, since=since)
         total = sum(count for _, count in rows)
+        geo = self._geo()
         countries = [
             CountryStat(
                 country=code,
@@ -63,7 +65,11 @@ class EventQueryService:
             description=COUNTRY_BASIS_DESCRIPTION,
             include_local=include_local,
             total_events=total,
-            simulated=self._geo_simulated,
+            simulated=geo.source in ("simulated", "mapping"),
+            source=geo.source,
+            database_month=geo.database.month if geo.database else None,
+            attribution=ATTRIBUTION if geo.source == "dbip" else None,
+            attribution_url=ATTRIBUTION_URL if geo.source == "dbip" else None,
             countries=countries,
         )
 
