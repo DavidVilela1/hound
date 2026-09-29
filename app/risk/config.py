@@ -247,6 +247,11 @@ def load_risk_file(path: Path) -> dict[str, Any]:
     return values
 
 
+def file_value_count(values: dict[str, Any]) -> int:
+    """How many settings a :func:`load_risk_file` result changes (weights count one each)."""
+    return len(values) - ("weights" in values) + len(values.get("weights", {}))
+
+
 _ENVIRONMENT_FIELDS = {
     "risk_suspicious_threshold": ("suspicious_threshold", lambda s: s.risk_suspicious_threshold),
     "risk_dangerous_threshold": ("dangerous_threshold", lambda s: s.risk_dangerous_threshold),

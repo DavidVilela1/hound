@@ -68,6 +68,18 @@ class RiskEngine:
         self._tracker = tracker or DeviceBehaviorTracker(self.config.window)
         self._signals = list(signals) if signals is not None else default_signals()
 
+    def reconfigure(self, config: RiskConfig) -> bool:
+        """Use ``config`` from now on. Returns ``True`` if behaviour windows had to be reset.
+
+        Per-device behaviour state survives unless the window length changes (the recorded
+        windows would no longer mean the same thing).
+        """
+        reset = config.window != self.config.window
+        if reset:
+            self._tracker = DeviceBehaviorTracker(config.window)
+        self.config = config
+        return reset
+
     def observe(self, event: NetworkEvent) -> None:
         """Update behavioural state from events that are not scored (DNS responses)."""
         if event.packet_type is PacketType.DNS_RESPONSE and event.dns_rcode == NXDOMAIN_RCODE:

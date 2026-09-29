@@ -6,6 +6,7 @@ Commands (``serve`` is the default and may be omitted)::
     python run.py capture --interface IFACE [--api-url URL]
     python run.py interfaces
     python run.py doctor [--interface IFACE]
+    python run.py reload [--api-url URL]
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from app.core.privileges import is_privileged as _is_privileged
 
 logger = logging.getLogger("hound")
 
-COMMANDS = ("serve", "capture", "interfaces", "doctor")
+COMMANDS = ("serve", "capture", "interfaces", "doctor", "reload")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Only monitor networks you own or are authorised to monitor.",
     )
     parser.add_argument("--version", action="version", version=f"hound {__version__}")
-    sub = parser.add_subparsers(dest="command", metavar="{serve,capture,interfaces,doctor}")
+    sub = parser.add_subparsers(dest="command", metavar="{serve,capture,interfaces,doctor,reload}")
 
     serve = sub.add_parser("serve", help="Run the API and dashboard (default command).")
     source = serve.add_mutually_exclusive_group()
@@ -67,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor", help="Check this computer's setup (packages, capture driver, port, database) without changing it."
     )
     doctor.add_argument("-i", "--interface", help="Also check that this capture interface exists.")
+
+    reload = sub.add_parser(
+        "reload", help="Apply edits to the blocklist, allowlist and risk settings in a running server."
+    )
+    reload.add_argument("--api-url", help="Hound server URL (default http://127.0.0.1:8000).")
     return parser
 
 
@@ -174,6 +180,51 @@ def cmd_doctor(args: argparse.Namespace, settings: Settings) -> int:
     return exit_code(checks)
 
 
+def cmd_reload(args: argparse.Namespace, settings: Settings) -> int:
+    """Ask the running server to re-read its detection settings (token-authenticated)."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    from app.core.security import TOKEN_HEADER, read_ingest_token
+    from app.ingestion.forwarder import DIRECT_OPENER
+
+    token = read_ingest_token(settings)
+    if not token:
+        print(
+            f"No token found ({settings.resolve_path(settings.ingest_token_path)}). Start the server first, "
+            "or set HOUND_INGEST_TOKEN to the server's value.",
+            file=sys.stderr,
+        )
+        return 2
+    url = (args.api_url or settings.api_base_url).rstrip("/") + "/api/admin/reload"
+    request = urllib.request.Request(url, data=b"", method="POST", headers={TOKEN_HEADER: token})
+    try:
+        with DIRECT_OPENER.open(request, timeout=15) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read()).get("detail", "")
+        except (ValueError, AttributeError):
+            detail = ""
+        print(f"Reload refused (HTTP {exc.code}): {detail}", file=sys.stderr)
+        return 1 if exc.code == 400 else 2
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"Cannot reach Hound at {url}: {exc}. Is the server running?", file=sys.stderr)
+        return 2
+    overridden = result.get("risk_overridden_by_environment") or []
+    print(
+        "Reloaded: "
+        f"{result['blocklist_entries']} blocklist entries, "
+        f"allowlist {result['allowlist_domains']} domain(s) + {result['allowlist_devices']} device(s), "
+        f"{result['risk_values_from_file']} risk setting(s) from the file"
+        + (f"; overridden by environment: {', '.join(overridden)}" if overridden else "")
+        + ("; behaviour windows restarted (window length changed)" if result.get("behaviour_windows_reset") else "")
+        + "."
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(normalize_argv(sys.argv[1:] if argv is None else argv))
@@ -196,6 +247,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return cmd_interfaces()
         if args.command == "doctor":
             return cmd_doctor(args, settings)
+        if args.command == "reload":
+            return cmd_reload(args, settings)
         return cmd_serve(args, settings)
     except KeyboardInterrupt:
         return 130

@@ -30,6 +30,11 @@ class EnrichmentService:
         self._cache = resolution_cache
         self._allowlist = allowlist or Allowlist()
 
+    def update_lists(self, reputation: DomainReputation, allowlist: Allowlist) -> None:
+        """Swap the blocklist and allowlist; the DNS answer cache is kept (reload, 16c)."""
+        self._reputation = reputation
+        self._allowlist = allowlist
+
     def observe_dns_response(self, event: NetworkEvent) -> None:
         """Remember ``answer IP → queried domain`` from a DNS response."""
         if event.packet_type is not PacketType.DNS_RESPONSE or not event.domain:

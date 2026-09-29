@@ -194,6 +194,20 @@ class IngestResponse(BaseModel):
     dropped: int
 
 
+class ReloadOut(BaseModel):
+    """What ``POST /api/admin/reload`` loaded and applied."""
+
+    reloaded_at: datetime
+    blocklist_entries: int
+    allowlist_domains: int
+    allowlist_devices: int
+    risk_values_from_file: int = Field(description="Settings in the risk file that differ from the defaults.")
+    risk_overridden_by_environment: list[str] = Field(description="Risk settings pinned by HOUND_RISK_* values.")
+    behaviour_windows_reset: bool = Field(
+        description="True when the behaviour window length changed, so per-device windows restarted."
+    )
+
+
 # ---------------------------------------------------------------------------- metrics
 class LossMetrics(BaseModel):
     """Events lost per stage. ``None`` = that stage is not visible (no daemon report yet)."""

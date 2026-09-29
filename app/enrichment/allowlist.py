@@ -91,12 +91,20 @@ class Allowlist:
             )
         allowlist = cls(domains, networks)
         logger.info(
-            "Allowlist loaded", extra={"path": str(path), "domains": len(allowlist._domains), "devices": len(networks)}
+            "Allowlist loaded", extra={"path": str(path), "domains": allowlist.domain_count, "devices": len(networks)}
         )
         return allowlist
 
     def __bool__(self) -> bool:
         return bool(self._domains) or bool(self._networks)
+
+    @property
+    def domain_count(self) -> int:
+        return len(self._domains)
+
+    @property
+    def device_count(self) -> int:
+        return len(self._networks)
 
     def match_domain(self, domain: str | None) -> str | None:
         """The allowlist entry covering ``domain``, or ``None``."""

@@ -31,6 +31,7 @@ change their status or add a "Revisited" note.
 | 020 | Pipeline metrics as in-process JSON; the daemon reports its counters inside ingest batches | Accepted |
 | 021 | Allowlist: suppressed indicators stay visible; device entries never hide blocklist hits | Accepted |
 | 022 | Risk settings in a strict TOML file; explicitly set environment values override it | Accepted |
+| 023 | Reload detection settings via a token-protected endpoint; all-or-nothing swap between batches, learned state kept | Accepted |
 
 ---
 
@@ -320,3 +321,28 @@ change their status or add a "Revisited" note.
   `RiskWeights`, the `[weights]` model and the shipped file (the drift test enforces it).
   Found while building it: a pattern-based key mapping sent `nxdomain_burst` to a
   non-existent field; mappings are explicit now.
+
+## ADR-023 — Reloading detection settings in a running server
+* **Context:** field-trial tuning is edit → observe → edit; a restart loses in-memory
+  state (DNS answers used to name connections, per-device behaviour windows) and, in
+  split mode, makes the capture daemon buffer and retry.
+* **Options:** watch the files (surprising timing; half-saved files get applied);
+  POSIX `SIGHUP` (no Windows equivalent — the owner's platform); an HTTP endpoint plus a
+  CLI command.
+* **Chosen:** `POST /api/admin/reload`, authenticated with the ingest token in the
+  `X-Hound-Token` header, and `python run.py reload` which reads the token like the
+  capture daemon does. The runtime loads and validates all three sources first; only
+  then does `ProcessingService.reconfigure()` apply them under the lock that every batch
+  holds, so no batch mixes old and new settings and a reload waits at most one batch.
+  Components are updated in place: the enrichment service swaps its lists (DNS answer
+  cache kept), the risk engine swaps its config (behaviour tracker kept unless the window
+  length changes). Invalid risk settings → 400, nothing changed. Environment/`.env`
+  values are not re-read.
+* **Reason:** works the same on Windows, Linux and macOS; explicit and scriptable; the
+  custom-header requirement means a web page in the owner's browser cannot trigger it
+  (a cross-origin request with a custom header needs a CORS preflight, which Hound never
+  grants) — the same property that protects ingest.
+* **Consequences:** anyone with the ingest token can reload (they could already inject
+  events). A missing blocklist or allowlist file on reload is not an error (same as at
+  start-up); the response shows the entry counts, so an accidentally emptied blocklist is
+  visible. Stored events are not rescored.

@@ -11,6 +11,10 @@ Until then everything is listed under **Unreleased**.
 ## [Unreleased]
 
 ### Added
+- **Reload without restart**: `python run.py reload` (token-authenticated
+  `POST /api/admin/reload`) re-reads the blocklist, allowlist and risk settings and
+  applies them between two batches; all or nothing, and learned DNS answers and device
+  behaviour are kept (ADR-023).
 - **Risk settings file** (`config/risk.toml`, `HOUND_RISK_CONFIG_PATH`): every weight and
   threshold of the risk engine in one commented TOML file (stdlib `tomllib`), strictly
   validated; explicitly set `HOUND_RISK_*` values override it; an invalid file stops the

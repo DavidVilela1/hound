@@ -226,6 +226,17 @@ are needed. Invalid values stop start-up with a clear message.
 `?` or `#`, encode them (`%25`, `%3F`, `%23`). The project's own location may
 contain any characters; Hound encodes it itself.
 
+**Applying edits without a restart.** While the server runs, `python run.py
+reload` re-reads the blocklist, allowlist and risk settings and applies them
+between two processing batches. It is all or nothing: if the risk file is
+invalid, the reload is refused with the reason and the previous settings stay in
+effect. What Hound has learned is kept — the DNS answers used to name
+connections and each device's recent behaviour (the behaviour windows restart
+only if you change their length). Events already stored keep the score they got.
+Values from the environment or `.env` are not re-read; restart for those. The
+command authenticates with the ingest token (it reads `data/.ingest_token`,
+like the capture daemon); `--api-url` points it at another port.
+
 **Blocklist** (`config/blocklist.txt`): one domain per line; `#` comments,
 `*.domain` and hosts-file lines (`0.0.0.0 domain`) are accepted. The sample
 entries use reserved TLDs (`.example`, `.test`, `.invalid`) so they never flag
@@ -244,7 +255,8 @@ engine uses — score levels, behaviour windows and counts, domain heuristics
 (entropy, length, risky TLDs, unusual query types), port lists, trusted DNS
 resolvers and the points per signal (`0` switches a signal off). The shipped
 file lists every setting commented out with its built-in default; remove the
-`# ` in front of a value to change it and restart. Unknown sections or keys are
+`# ` in front of a value to change it, then apply it with `python run.py reload`
+(see below) or a restart. Unknown sections or keys are
 errors — a typo must not silently do nothing — and an invalid file stops
 start-up with one line naming the problem (`python run.py doctor` checks it
 too). **Precedence:** built-in defaults < `config/risk.toml` < `HOUND_RISK_*` /
@@ -257,7 +269,7 @@ trust, so their indicators stop being counted — for example a CDN whose
 random-looking host names trip the entropy signal, or your NAS that legitimately
 connects to many devices. One entry per line: a **domain** (matched like the
 blocklist, including subdomains) or a **device** (an IP address or a CIDR range
-such as `192.168.1.64/28`). Restart Hound after editing.
+such as `192.168.1.64/28`). Apply edits with `python run.py reload`.
 
 * An allowlisted **domain** has none of its indicators counted, including a
   blocklist match on that exact name.
@@ -404,6 +416,7 @@ closed local ports; they appear in the dashboard within a second, and
 | `python run.py -i IFACE` | everything in one process | capture rights |
 | `python run.py interfaces` | list interfaces | none (usually) |
 | `python run.py doctor [-i IFACE]` | read-only environment check | none (run it elevated to check capture rights) |
+| `python run.py reload` | apply edited blocklist/allowlist/risk settings to the running server | none |
 
 `python -m app …` and (after `pip install -e .`) `hound …` accept the same arguments.
 
@@ -467,6 +480,7 @@ Interactive docs: <http://127.0.0.1:8000/docs> (Swagger UI) and
 | `GET /api/stats/countries` | share of events by destination country | `include_local` (default false), `since_minutes` |
 | `GET /api/metrics` | loss per pipeline stage + queue/latency/storage counters (no domains or addresses) | – |
 | `POST /api/ingest` | capture-daemon ingest (≤ 1000 events, ≤ 2 MB), optionally with the daemon's own counters | header `X-Hound-Token` |
+| `POST /api/admin/reload` | re-read blocklist, allowlist and risk settings; 400 (nothing changed) if invalid | header `X-Hound-Token` |
 | `WS /ws/events` | live stream: `{"type":"event","data":<Event>}`, plus `hello`/`heartbeat` | – |
 
 Invalid input returns **422** with details; unknown IDs **404**; a bad ingest

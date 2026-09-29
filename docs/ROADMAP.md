@@ -5,7 +5,7 @@
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md); architecture in
 > [`ARCHITECTURE.md`](ARCHITECTURE.md); decisions in [`DECISIONS.md`](DECISIONS.md).
 >
-> Last reviewed: 2026-09-28 (16b done; next: 16c reload without restart).
+> Last reviewed: 2026-09-29 (16c done; next: 17a backup command).
 
 ---
 
@@ -291,8 +291,8 @@ M6 stays open until its exit criteria are met.*
 
 ### Phase 16 — Field trial & detection tuning → M7
 * **Slices:** 16a allowlist — **DONE** (ADR-021) · 16b risk settings from an optional TOML
-  file — **DONE** (ADR-022) · **16c blocklist/allowlist/risk-settings reload without restart
-  ← next task** · 16d field
+  file — **DONE** (ADR-022) · 16c blocklist/allowlist/risk-settings reload without restart
+  — **DONE** (ADR-023) · 16d field
   trial + tuning (needs the owner's monitoring position).
 * **Tasks:** run on the owner's network ≥ 7 days (split mode); review every
   suspicious/dangerous event; add an **allowlist** (domains/devices never flagged);
@@ -304,6 +304,9 @@ M6 stays open until its exit criteria are met.*
   mid-session.
 
 ### Phase 17 — Data lifecycle
+*Sequencing note (2026-09-29): 16d needs the owner's monitoring position; Phase 17 starts
+meanwhile. Slices: **17a `backup` command + verified restore ← next task** · 17b export
+(CSV/JSON) · 17c device-row expiry + time-based retention · 17d periodic `PRAGMA optimize`.*
 * **Tasks:** `hound db backup` (SQLite online backup API), CSV/JSON export endpoint,
   device-row expiry, optional time-based retention, periodic `PRAGMA optimize`.
 * **Prereq:** 14.2. **Acceptance:** restore from backup verified by test.

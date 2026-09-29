@@ -5,18 +5,19 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-28 (session 11: task 16b risk settings file)
+Last updated:      2026-09-29 (session 12: task 16c reload without restart)
 Current milestone: M6 — Production-quality local build   (M0–M5 reached; M2 on Linux + Windows)
-Current phase:     Phase 16 — Field trial & detection tuning (16a, 16b done); Phase 14's last
+Current phase:     Phase 16 — engineering part done (16a–16c); 16d field trial needs the
+                   owner. Phase 17 (data lifecycle) starts meanwhile. Phase 14's last
                    items (licence, version label) wait on the owner
 Current task:      none in progress
-Next task:         16c reload blocklist, allowlist and risk settings without a restart
+Next task:         17a `python run.py backup` — consistent SQLite backup + verified restore
 Overall state:     Working system with a versioned, upgrade-safe database, an end-to-end
                    tested capture daemon, an automatically tested dashboard, reproducible
                    hash-checked installs, a read-only `doctor` setup check and per-stage
                    loss metrics (`/api/metrics`), a reproducible benchmark and an
-                   owner allowlist and a risk settings file (94 % line coverage). Linux:
-                   352 tests pass
+                   owner allowlist, a risk settings file and reload without restart
+                   (94 % line coverage). Linux: 362 tests pass
                    (Py 3.11 + 3.13, from the lock). Owner: Windows 292 passed + 3 expected
                    skips (before 15b); CI green on Linux/Windows/macOS (before 15b); live
                    capture works on Windows (split mode, Npcap, "Wi-Fi").
@@ -39,7 +40,7 @@ Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS 
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
                                 components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       352 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       362 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -104,6 +105,9 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 | 2026-09-28 s7 | `pytest` with 15a + URL fix — **owner's Windows laptop** | Windows | 292 passed, 3 skipped (POSIX file-mode tests; expected) |
 | 2026-09-28 s7 | `python run.py doctor` — **owner's Windows laptop** (Py 3.13.7) | Windows | 0 problems, 2 warnings, both correct: Npcap not installed; data folder inside OneDrive. Packages match the lock; 48 interfaces, default "Wi-Fi"; DB schema v1 current; token OK; not Administrator (INFO) |
 | 2026-09-28 s7 | **Live capture, split mode — owner's Windows laptop**: data moved out of OneDrive via `.env` (`C:\hound-data`), Npcap installed, server as normal user, `python run.py capture -i "Wi-Fi"` from an Administrator shell | Windows (Py 3.13.7) | owner: "working" (events appear in the dashboard). First attempt before starting the server: capture refused with the intended "No ingest token found … start the server first" message. Detailed counts not shared |
+| 2026-09-29 s12 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 362 / 362 / 362 passed; clean; smoke all passed; `routes/admin.py` 100 % |
+| 2026-09-29 s12 | Mutation check (6: swap without the batch lock, windows always reset, DNS cache dropped, no token check, not all-or-nothing, CLI hiding a refusal) — every run under `timeout` | Py 3.11 | each caught; originals restored |
+| 2026-09-29 s12 | **Real demo server + real `python run.py reload`**: `[weights] blocklisted_domain = 0` written, reloaded, then a typo'd file | Linux, lock venv 3.13 | before: 18 blocklist hits, all DANGEROUS (70 pts); reload exit 0; events after: 9 hits with 0 pts (8 SAFE, 1 SUSPICIOUS from other signals); typo → "Reload refused (HTTP 400) … weights.blocklisted: unknown setting … previous settings stay in effect", exit 1, server still serving |
 | 2026-09-28 s11 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy (linux/win32/darwin); compileall; smoke | Linux | 352 / 352 / 352 passed; clean; smoke all passed; `risk/config.py` 99 % |
 | 2026-09-28 s11 | Drift guard (uncomment every value in `config/risk.toml`) while building | Py 3.11 | **caught 2 real problems**: a prose comment line looked like a setting (file would break when "uncommented"), and `[behaviour] nxdomain_burst` mapped to a non-existent field — both fixed |
 | 2026-09-28 s11 | Mutation check (6: typos ignored, environment not winning, wrong key mapping, CLI traceback instead of exit 2, doctor skipping the file, `.env.example` pinning a value) | Py 3.11 | each caught. First attempt hung: with typos ignored, the CLI test started a real server → test now replaces `uvicorn.run` with a failing stub |
@@ -246,14 +250,25 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
   absent risk file. `tests/test_risk_config.py` (18). README §8, ARCHITECTURE §3.6,
   ADR-022, CHANGELOG.
 
+- **16c Reload without restart (session 12):** `POST /api/admin/reload` (ingest token in
+  `X-Hound-Token`; `app/api/routes/admin.py`) and `python run.py reload` (exit 0 applied,
+  1 refused, 2 no token/unreachable/401). `HoundRuntime.reload_detection_config()` loads
+  and validates blocklist, allowlist and risk settings first, then swaps them via
+  `ProcessingService.reconfigure()` under the per-batch lock; `EnrichmentService
+  .update_lists()` keeps the DNS answer cache, `RiskEngine.reconfigure()` keeps the
+  behaviour tracker unless the window length changes (ADR-023). Shared helper
+  `file_value_count()` (doctor + reload). `tests/test_reload.py` (10). README §8/§11/§13,
+  shipped config comments, ARCHITECTURE §3.11, ADR-023, CHANGELOG.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **16c Reload without restart.** Re-read the blocklist, allowlist and risk settings on
-   request (e.g. `POST /api/admin/reload`, token-protected like ingest, or a dashboard
-   button), swapping them atomically on the processing thread; an invalid file keeps the
-   old settings and reports why. Makes field-trial tuning a quick loop. Unblocked.
+1. **17a Backup command.** `python run.py backup [PATH]`: a consistent copy of the live
+   database with SQLite's online backup API (safe while the server writes), owner-only
+   file permissions, integrity check of the copy, and a documented, test-verified
+   restore. Today the README only says "copy `data/`", which is unsafe with WAL files
+   while running. Protects the owner's data before the field trial. Unblocked.
 2. 16d field trial + tuning (needs the owner's monitoring position).
 3. 14.3b LICENSE + version label, once the owner decides.
 4. Owner: if an older `.env` was copied from `.env.example`, remove its `HOUND_RISK_*`
@@ -313,7 +328,8 @@ Packaging       FUNCTIONAL      Hash-checked universal locks (ADR-019), CHANGELO
 - Encrypted DNS (DoH/DoT/DoQ) hides domain names.
 - Risk levels are heuristics, not malware detection; not yet tuned on real traffic.
 - Devices are identified by IP address.
-- Allowlist and risk-settings changes need a restart (16c); entries match domains or source devices only —
+- Allowlist and risk-settings changes apply with `python run.py reload`; `.env` changes
+  still need a restart; entries match domains or source devices only —
   "any device → this destination" (e.g. SMB to the owner's NAS) is not expressible yet.
 - Single process, single user, localhost only; no dashboard authentication.
 - Live capture verified on Linux (loopback) and Windows (Wi-Fi, owner's report); macOS not

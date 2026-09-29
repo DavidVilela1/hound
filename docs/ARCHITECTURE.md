@@ -184,7 +184,13 @@ tested · extension points. File references are to the current code.
 
 ### 3.11 Composition & lifecycle — `app/services/runtime.py`, `app/api/app.py`, `app/cli.py`
 * **Responsibility:** build and wire all components; start/stop order; run modes
-  (`idle`, `demo`, `capture`); CLI commands (`serve`, `capture`, `interfaces`, `doctor`).
+  (`idle`, `demo`, `capture`); CLI commands (`serve`, `capture`, `interfaces`, `doctor`,
+  `reload`). `HoundRuntime.reload_detection_config()` (ADR-023) re-reads the blocklist,
+  allowlist and risk settings, validates everything first, then swaps them through
+  `ProcessingService.reconfigure()` — under the lock held for each batch — via
+  `EnrichmentService.update_lists()` (DNS answer cache kept) and `RiskEngine.reconfigure()`
+  (behaviour tracker kept unless the window length changes). Exposed as the
+  token-protected `POST /api/admin/reload` (`app/api/routes/admin.py`).
 * **Failure modes:** DB init failure aborts start-up with a clear log line; source
   failures are non-fatal (API/dashboard keep running).
 * **Shutdown order:** source stop → worker drains queue → broadcaster unbind → engine

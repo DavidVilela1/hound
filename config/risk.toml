@@ -1,7 +1,8 @@
 # Hound risk settings
 # -------------------
 # Every value below is commented out and shows the built-in default. To change one,
-# remove the leading "# " on that line (keep the [section] line above it) and restart.
+# remove the leading "# " on that line (keep the [section] line above it), then run
+# `python run.py reload` while Hound is running (or restart it).
 #
 # Precedence: built-in defaults < this file < HOUND_RISK_* / HOUND_TRUSTED_DNS_SERVERS
 # settings you set explicitly (environment or .env).

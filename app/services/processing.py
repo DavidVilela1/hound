@@ -91,6 +91,7 @@ class ProcessingService:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._batch_lock = threading.Lock()  # one batch at a time; reconfigure() waits for it
         self._stats = ProcessingStats()
         self._latencies_ms: deque[float] = deque(maxlen=LATENCY_SAMPLES)
 
@@ -128,13 +129,19 @@ class ProcessingService:
         """Process a batch synchronously (also used directly by tests)."""
         started = time.perf_counter()
         try:
-            return self._process_batch(events)
+            with self._batch_lock:
+                return self._process_batch(events)
         finally:
             if events:
                 elapsed_ms = (time.perf_counter() - started) * 1000
                 with self._lock:
                     self._stats.batches += 1
                     self._latencies_ms.append(elapsed_ms)
+
+    def reconfigure(self, apply: Callable[[], None]) -> None:
+        """Run ``apply`` between batches, so no batch sees half-old, half-new settings."""
+        with self._batch_lock:
+            apply()
 
     def _process_batch(self, events: Sequence[NetworkEvent]) -> list[EventOut]:
         processed: list[ProcessedEvent] = []

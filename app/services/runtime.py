@@ -41,10 +41,11 @@ from app.models.schemas import (
     PipelineStatus,
     ProcessingMetrics,
     QueueMetrics,
+    ReloadOut,
     StorageMetrics,
     WebSocketMetrics,
 )
-from app.risk.config import RiskConfig
+from app.risk.config import RiskConfig, explicit_environment, file_value_count, load_risk_file
 from app.risk.engine import RiskEngine
 from app.services.broadcaster import EventBroadcaster
 from app.services.processing import ProcessingService
@@ -217,6 +218,40 @@ class HoundRuntime:
             remote_ingest_enabled=self.ingest_token is not None,
             started_at=self._started_at,
         )
+
+    def reload_detection_config(self) -> ReloadOut:
+        """Re-read the blocklist, allowlist and risk settings and apply them (16c, ADR-023).
+
+        Everything is loaded and validated first; an invalid risk file raises
+        :class:`RiskConfigError` and nothing changes. The swap happens between two batches,
+        and the DNS answer cache and per-device behaviour windows are kept (the windows
+        restart only when their length changes). Environment/.env values are not re-read.
+        """
+        settings = self.settings
+        file_values = load_risk_file(settings.resolve_path(settings.risk_config_path))
+        config = RiskConfig.from_settings(settings)
+        blocklist = Blocklist.from_file(settings.resolve_path(settings.blocklist_path))
+        allowlist = Allowlist.from_file(settings.resolve_path(settings.allowlist_path))
+        windows_reset = False
+
+        def apply() -> None:
+            nonlocal windows_reset
+            self.enrichment.update_lists(blocklist, allowlist)
+            windows_reset = self.risk_engine.reconfigure(config)
+
+        self.processor.reconfigure(apply)
+        self.blocklist = blocklist
+        result = ReloadOut(
+            reloaded_at=datetime.now(UTC),
+            blocklist_entries=len(blocklist),
+            allowlist_domains=allowlist.domain_count,
+            allowlist_devices=allowlist.device_count,
+            risk_values_from_file=file_value_count(file_values),
+            risk_overridden_by_environment=sorted(explicit_environment(settings)),
+            behaviour_windows_reset=windows_reset,
+        )
+        logger.info("Detection settings reloaded", extra=result.model_dump(mode="json"))
+        return result
 
     def metrics(self) -> MetricsOut:
         """Every loss point and the few performance numbers that drive decisions (ROADMAP §15)."""

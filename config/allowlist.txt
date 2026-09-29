@@ -3,8 +3,8 @@
 # Domains and devices whose risk indicators should not be counted. Use it for things you
 # have checked and trust, e.g. a CDN whose random-looking host names trip the entropy
 # signal, or your own NAS that legitimately connects to many devices.
-# One entry per line. Blank lines and text after '#' are ignored. Restart Hound after
-# editing. Nothing is hidden: affected events keep an "ALLOWLISTED" reason that names the
+# One entry per line. Blank lines and text after '#' are ignored. After editing, run
+# `python run.py reload` (or restart). Nothing is hidden: affected events keep an "ALLOWLISTED" reason that names the
 # entry and the indicators it covered.
 #
 # Domains - match the name itself and every subdomain (like the blocklist):
