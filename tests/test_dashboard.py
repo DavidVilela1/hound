@@ -16,6 +16,7 @@ import textwrap
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +27,12 @@ from nicegui.testing.user import User
 from nicegui.testing.user_simulation import user_simulation
 
 from app.api.app import create_app
-from app.core.config import Settings
+from app.core.config import DeploymentPosition, Settings
 from app.frontend import dashboard as dashboard_module
 from app.frontend.client import HoundApiClient, LiveEventStream
 from app.frontend.dashboard import FEED_LIMIT, DashboardPage
 from app.models.events import PacketType
+from app.services.coverage import IPV6_SYN_MISSED, PROFILES, CoverageService
 from app.services.runtime import HoundRuntime
 from tests.conftest import EventFactory
 
@@ -327,6 +329,66 @@ def test_clicking_a_device_opens_its_profile(settings: Settings, make_event: Eve
     run(scenario)
 
 
+# --------------------------------------------------------------------------- coverage (ADR-026)
+
+
+def test_coverage_note_is_always_on_the_page(settings: Settings, make_event: EventFactory) -> None:
+    async def scenario() -> None:
+        async with open_dashboard(settings, make_event) as h:
+            page = h.page
+            await wait_for(lambda: "Position not set" in page.coverage_label.text)
+            assert "Not enough traffic yet" in page.coverage_label.text  # the 3 fixture events are months old
+            assert "hound-coverage" in page.coverage_row.classes
+            assert "hound-coverage-warning" not in page.coverage_row.classes
+
+            h.user.find(marker="coverage-details").click()
+            await h.user.should_see("What Hound can see · Position not set")
+            await h.user.should_see("Does not see")
+            await h.user.should_see(f"• {IPV6_SYN_MISSED}")
+            await h.user.should_see("0 IPv4 devices (none)")
+
+    run(scenario)
+
+
+def test_coverage_warning_is_highlighted_and_explained(settings: Settings, make_event: EventFactory) -> None:
+    async def scenario() -> None:
+        gateway = settings.model_copy(update={"deployment_position": DeploymentPosition.GATEWAY})
+        async with open_dashboard(gateway, make_event) as h:
+            page = h.page
+            await wait_for(lambda: "Router / gateway" in page.coverage_label.text)
+            now = datetime.now(UTC)
+            h.runtime.processor.process_batch(
+                [make_event(source_ip=LAN_DEVICE, timestamp=now - timedelta(minutes=n)) for n in range(60)]
+            )
+            h.runtime.coverage = CoverageService(h.runtime.database, gateway, demo=lambda: False, cache_seconds=0)
+            await page._load_coverage()
+            assert page.coverage_label.text.startswith("⚠ Router / gateway: Only one device (192.168.1.10)")
+            assert "hound-coverage-warning" in page.coverage_row.classes
+            assert "hound-coverage" not in page.coverage_row.classes
+
+            h.user.find(marker="coverage-details").click()
+            await h.user.should_see("Sees")
+            await h.user.should_see(f"• {PROFILES[DeploymentPosition.GATEWAY].misses[1]}")
+            await h.user.should_see("1 IPv4 devices (192.168.1.10)")
+
+    run(scenario)
+
+
+def test_coverage_is_refreshed_once_a_minute(
+    settings: Settings, make_event: EventFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        async with open_dashboard(settings, make_event) as h:
+            await wait_for(lambda: len(h.transport.paths("/api/coverage")) == 1)
+            await h.page._slow_tick()
+            assert len(h.transport.paths("/api/coverage")) == 1  # not on every slow tick
+            monkeypatch.setattr(dashboard_module, "COVERAGE_SECONDS", 0.0)
+            await h.page._slow_tick()
+            assert len(h.transport.paths("/api/coverage")) == 2
+
+    run(scenario)
+
+
 # --------------------------------------------------------------------------- failure handling
 
 
@@ -345,6 +407,9 @@ def test_unreachable_api_shows_banner_and_recovers(settings: Settings, make_even
             await wait_for(lambda: h.user.notify.contains("Could not load event"))
             h.user.find(marker="devices-table").trigger("rowClick", [{}, {"ip": LAN_DEVICE}, 0])
             await wait_for(lambda: h.user.notify.contains("Could not load device"))
+            h.user.find(marker="coverage-details").click()
+            await wait_for(lambda: h.user.notify.contains("Could not load coverage information"))
+            assert page.coverage_label.text == "Checking what Hound can see…"
             assert not page.detail_dialog.value
 
             h.transport.down = False
@@ -389,7 +454,7 @@ MOUNT_PROBE = textwrap.dedent(
     import sys
     from fastapi.testclient import TestClient
     from app.api.app import create_app
-    from app.core.config import Settings
+    from app.core.config import DeploymentPosition, Settings
     from app.frontend.dashboard import mount_dashboard
 
     settings = Settings(_env_file=None, database_url="sqlite:///" + sys.argv[1], allowed_hosts="testserver")

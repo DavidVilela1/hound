@@ -118,6 +118,27 @@ class EventRepository:
         query = select(func.count(EventRecord.id)).where(EventRecord.blocklist_match.is_not(None))
         return int(self._session.scalar(query) or 0)
 
+    def initiators_since(self, since: datetime) -> list[tuple[str, int, datetime, datetime]]:
+        """Per source address: lookups + connection attempts since ``since``, first and last time.
+
+        Every stored event is a DNS lookup or a TCP connection attempt (DNS answers only
+        update the cache), so every address here started something. No packet-type filter:
+        without one SQLite answers from the covering (source_ip, timestamp) index, ~4x faster
+        at 250 k rows (measured 85-95 ms vs 360 ms).
+        """
+        query = (
+            select(
+                EventRecord.source_ip,
+                func.count(),
+                func.min(EventRecord.timestamp),
+                func.max(EventRecord.timestamp),
+            )
+            .where(EventRecord.timestamp >= since)
+            .group_by(EventRecord.source_ip)
+        )
+        rows = self._session.execute(query).all()  # min()/max() keep the column's UTC type
+        return [(str(ip), int(count), first, last) for ip, count, first, last in rows]
+
     def country_distribution(self, *, include_local: bool, since: datetime | None = None) -> list[tuple[str, int]]:
         country = func.coalesce(EventRecord.country, UNKNOWN_COUNTRY)
         query = select(country, func.count(EventRecord.id)).group_by(country)

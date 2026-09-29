@@ -59,6 +59,9 @@ class HoundApiClient:
     async def stats(self) -> JSON:
         return await self._get("/api/stats")
 
+    async def coverage(self) -> JSON:
+        return await self._get("/api/coverage")
+
     async def events(self, **params: Any) -> JSON:
         return await self._get("/api/events", params)
 

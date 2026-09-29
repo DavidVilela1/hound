@@ -48,6 +48,7 @@ from app.models.schemas import (
 from app.risk.config import RiskConfig, explicit_environment, file_value_count, load_risk_file
 from app.risk.engine import RiskEngine
 from app.services.broadcaster import EventBroadcaster
+from app.services.coverage import CoverageService
 from app.services.processing import ProcessingService
 from app.services.queries import DeviceQueryService, EventQueryService, StatsService
 from app.services.store import SqlEventStore
@@ -108,6 +109,7 @@ class HoundRuntime:
         self.events = EventQueryService(self.database, geo_simulated=settings.geo_mode == "simulated")
         self.devices = DeviceQueryService(self.database)
         self.stats = StatsService(self.database, self.pipeline_status)
+        self.coverage = CoverageService(self.database, settings, demo=lambda: self.mode is RunMode.DEMO)
 
         self.ingest_token: str | None = None
         self._ingest_lock = threading.Lock()

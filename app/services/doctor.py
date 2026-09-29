@@ -407,6 +407,23 @@ def check_risk_settings(settings: Settings) -> Check:
     return Check("Risk settings", Status.OK, detail)
 
 
+def check_deployment_position(settings: Settings) -> Check:
+    """States what the chosen position can see (ADR-026); never a problem, only information."""
+    from app.core.config import DeploymentPosition
+    from app.services.coverage import CHOICES, PROFILES, SETTING
+
+    position = settings.deployment_position
+    profile = PROFILES[position]
+    if position is DeploymentPosition.AUTO:
+        return Check(
+            "Deployment position",
+            Status.INFO,
+            f"not set; the dashboard and GET /api/coverage describe what Hound sees from the traffic. "
+            f"Set {SETTING} ({CHOICES}) to state it",
+        )
+    return Check("Deployment position", Status.OK, f"{profile.label}; does not see {profile.main_blind_spot}")
+
+
 # ------------------------------------------------------------------------------ orchestration
 def run_checks(settings: Settings, interface: str | None = None) -> list[Check]:
     from app.ingestion.capture import default_interface, list_interfaces
@@ -424,6 +441,7 @@ def run_checks(settings: Settings, interface: str | None = None) -> list[Check]:
         check_database(settings),
         check_ingest_token(settings),
         check_risk_settings(settings),
+        check_deployment_position(settings),
     ]
 
 

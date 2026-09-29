@@ -92,6 +92,7 @@ def settings(tmp_path: Path, blocklist_file: Path, geo_file: Path) -> Settings:
         blocklist_path=blocklist_file,
         allowlist_path=tmp_path / "allowlist.txt",  # absent: the owner's own allowlist never affects tests
         risk_config_path=tmp_path / "risk.toml",  # absent: built-in risk defaults, whatever the owner tuned
+        deployment_position="auto",  # whatever position the owner's environment states
         geo_ranges_path=geo_file,
         ingest_token_path=tmp_path / ".ingest_token",
         allowed_hosts="testserver,127.0.0.1,localhost",

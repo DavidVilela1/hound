@@ -211,6 +211,7 @@ silently change the bind address):
 | `DATABASE_URL` | `HOUND_DATABASE_URL` | `sqlite:///data/hound.db` |
 | `NETWORK_INTERFACE` | `HOUND_NETWORK_INTERFACE` | system default |
 | `BPF_FILTER` | `HOUND_BPF_FILTER` | `udp port 53 or tcp port 53 or (tcp[tcpflags] & tcp-syn != 0)` |
+| `DEPLOYMENT_POSITION` | `HOUND_DEPLOYMENT_POSITION` | `auto` — where Hound captures: `this_computer`, `gateway`, `mirror`, `dns_server` (§9) |
 | `BLOCKLIST_PATH` | `HOUND_BLOCKLIST_PATH` | `config/blocklist.txt` |
 | `LOG_LEVEL` | `HOUND_LOG_LEVEL` | `INFO` |
 
@@ -324,10 +325,39 @@ name, the same as the *Name* shown by `Get-NetAdapter` (for example `Wi-Fi`).
 The DESCRIPTION column (the adapter model) and the Npcap device name
 `\Device\NPF_{…}` are accepted too.
 
-**What you will see.** On a switched or Wi-Fi network a normal computer only
-sees its *own* traffic (plus broadcast/multicast). To monitor every device, run
-Hound on the router, on a machine attached to a switch **mirror/SPAN port**, or
-on the host that serves DNS for the network (e.g. a Pi-hole box).
+### Where to run Hound (what each position can see)
+
+What Hound sees depends entirely on **where** it captures. You choose the
+position; Hound tells you what that position can and cannot see — in the
+dashboard (the line under the header, and *What Hound can't see*), in
+`python run.py doctor`, and at `GET /api/coverage`. State the position in `.env`:
+
+```bash
+HOUND_DEPLOYMENT_POSITION=this_computer   # or gateway, mirror, dns_server
+```
+
+| Position (value) | Sees | Does not see |
+|---|---|---|
+| This computer only (`this_computer`) — a laptop or desktop, the usual start | DNS lookups and new TCP connections of this computer; connection attempts other devices make *to* it | **Other devices**: switches send each device only its own traffic, and Wi-Fi adapters (outside monitor mode) pass on only this computer's. Traffic inside a VPN, unless you capture on the VPN adapter |
+| Router / gateway (`gateway`) — e.g. an OpenWrt router or a Linux box routing the LAN | Lookups and internet connections of every device that uses it — capture on the **LAN side** | Traffic between devices inside the LAN (often switched in hardware). On the WAN side, address translation makes every device look like the router |
+| Mirror / SPAN port (`mirror`) — a machine on a managed switch's mirror port | Whatever the switch copies: mirror the router's port to see every device's internet traffic | Ports that are not mirrored (e.g. Wi-Fi clients of an access point not behind this switch); copies the switch drops under load — invisible to Hound's metrics |
+| DNS server (`dns_server`) — the machine that answers the network's lookups (e.g. next to Pi-hole) | Which names **every** device looks up; this machine's own connections | Other devices' connections (so port-scan, sweep and suspicious-port signals apply only to this machine); devices using another DNS server; *which* device asked, if the router forwards lookups on the devices' behalf |
+
+**In every position** Hound does not see: names looked up over encrypted DNS
+(DNS over HTTPS/TLS, e.g. a browser's secure DNS or Android's Private DNS — the
+connections are still seen, without a name); connections over UDP, including
+QUIC/HTTP-3; IPv6 connection attempts with the default capture filter (see §19);
+and the content of any connection.
+
+**Checked against the traffic.** Hound counts the local IPv4 addresses that
+looked up a name or started a connection in the last 24 hours (IPv6 addresses
+are shown but not counted as devices, because one computer uses several). After
+at least 50 lookups/connections over 15 minutes it compares that with the
+position: one device on a *gateway* or *mirror* position, several on
+*this_computer*, or a single address on *dns_server* is flagged with the likely
+cause. With the position unset (`auto`), Hound says what it infers — for
+example "only one device … most likely just the computer it runs on". In demo
+mode the traffic is synthetic and is never used as evidence.
 
 ## 10. Running demo mode
 
@@ -361,8 +391,8 @@ python run.py doctor                 # add -i "Wi-Fi" (or eth0, en0) to check an
 packages against `requirements.lock`, the capture driver (Npcap on Windows,
 libpcap elsewhere), privileges, the interface, the bind address, whether the
 port is free or already used by a running Hound, cloud-synced data folders,
-the database (readable, schema version, upgrades), the ingest token and the
-risk settings file. Each
+the database (readable, schema version, upgrades), the ingest token, the
+risk settings file and the deployment position (what it cannot see, §9). Each
 problem comes with the fix. It exits with status 1 if something would stop
 Hound from working, so it can also be scripted.
 
@@ -496,6 +526,7 @@ Interactive docs: <http://127.0.0.1:8000/docs> (Swagger UI) and
 | `GET /api/devices/{ip}` | one device incl. recent observations | – |
 | `GET /api/stats` | totals, per-level counts, last-minute count, pipeline status | – |
 | `GET /api/stats/countries` | share of events by destination country | `include_local` (default false), `since_minutes` |
+| `GET /api/coverage` | the deployment position, what it can and cannot see, and a check against the last 24 h of traffic (§9) | – |
 | `GET /api/metrics` | loss per pipeline stage + queue/latency/storage counters (no domains or addresses) | – |
 | `POST /api/ingest` | capture-daemon ingest (≤ 1000 events, ≤ 2 MB), optionally with the daemon's own counters | header `X-Hound-Token` |
 | `POST /api/admin/reload` | re-read blocklist, allowlist and risk settings; 400 (nothing changed) if invalid | header `X-Hound-Token` |
@@ -535,6 +566,9 @@ destinations (e.g. your router as DNS resolver) are excluded.
 Open <http://127.0.0.1:8000>.
 
 * **Header** – run mode, event-source state and live-connection indicator; theme toggle.
+* **Coverage line** – what this deployment position can see, checked against
+  the traffic (highlighted when the two disagree); *What Hound can't see* lists
+  the blind spots (§9).
 * **Overview tiles** – total events, devices observed, suspicious and dangerous
   events, events in the last minute, and application status (Demo / Capturing /
   Listening / Degraded / Offline). Banners explain demo mode, a waiting capture
@@ -657,7 +691,7 @@ hound/
 │   │   ├── app.py             # FastAPI factory: middleware, lifespan, routers
 │   │   ├── deps.py            # dependency helpers, input validation
 │   │   ├── openapi.py         # OpenAPI customisation
-│   │   └── routes/            # health, events, devices, stats, ingest, ws
+│   │   └── routes/            # health, events, devices, stats, metrics, coverage, ingest, admin, ws
 │   ├── core/
 │   │   ├── config.py          # Settings (env/.env/CLI), path resolution
 │   │   ├── logging_config.py  # text/JSON structured logging
@@ -705,6 +739,7 @@ hound/
 │       ├── processing.py      # worker: enrich → score → persist → publish
 │       ├── store.py           # transactional persistence + retention
 │       ├── queries.py         # read services for the API
+│       ├── coverage.py        # what each deployment position can see (ADR-026)
 │       ├── broadcaster.py     # WebSocket fan-out
 │       └── mappers.py         # ORM → schema
 ├── config/
@@ -782,7 +817,8 @@ hound/
   elevated risk; false positives (e.g. CDN hostnames with random-looking labels)
   and false negatives are expected — use the allowlist (§8) for ones you have
   checked. They are not malware detection.
-* **Visibility** is limited to traffic that reaches the capture interface (see §9).
+* **Visibility** is limited to traffic that reaches the capture interface; see
+  §9 *Where to run Hound* for what each position can and cannot see.
 * **Encrypted DNS** (DoH/DoT/DoQ) hides domain names; only the connection to the
   resolver is visible.
 * **IPv6 SYNs:** the default BPF expression `tcp[tcpflags]` matches IPv4 only

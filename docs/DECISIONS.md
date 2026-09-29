@@ -403,4 +403,26 @@ change their status or add a "Revisited" note.
   dashboard (visible coverage note) and the README. Where possible Hound infers the
   position from traffic (e.g. only one source device seen → "this computer only").
 * **Consequences:** a new slice 16e in the roadmap; a small setting or inference step;
-  copy that must stay accurate per position. Implementation not started.
+  copy that must stay accurate per position.
+* **Implemented (16e, 2026-09-29):** `HOUND_DEPLOYMENT_POSITION` = `auto` (default) |
+  `this_computer` | `gateway` | `mirror` | `dns_server`; the copy for each position lives
+  once, in `app/services/coverage.py`, and feeds `GET /api/coverage`, the dashboard's
+  coverage line and dialog, and a `doctor` line (the README table is kept in step by a
+  drift-guard test). The traffic check:
+  * counts **local IPv4 addresses that started something** (a lookup or a connection
+    attempt) in the last 24 h. IPv6 addresses are reported but never decide, because one
+    computer uses several at once. Public IPv4 sources are counted separately (their
+    usual cause: capturing on a router's WAN side);
+  * gives no verdict before **50 lookups/connections spread over 15 minutes**, so a quiet
+    first minute on a router is not called "one device";
+  * never judges demo traffic;
+  * flags a mismatch as a *warning* with its likely cause (one device on a gateway or
+    mirror; several on `this_computer`; one address on a DNS server = router forwarding),
+    and with the position unset only *infers* ("most likely just this computer").
+  Blind spots of every position are stated as well: encrypted DNS, UDP/QUIC, IPv6
+  connection attempts under the default filter (checked: libpcap 1.10.4 does not match
+  an IPv6 SYN with `tcp[tcpflags]`; replaced by a neutral line when `HOUND_BPF_FILTER`
+  is customised), and connection content.
+* **Rejected:** counting every row of the device table (an address that only *receives*
+  connections would also count); a hard verdict on one device (VMs, containers and
+  inbound connections legitimately add addresses, so the wording is "most likely"/"check").

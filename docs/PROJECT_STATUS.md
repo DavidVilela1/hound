@@ -5,19 +5,18 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (owner decisions: MIT licence, version 1.0.0 → M6 reached)
+Last updated:      2026-09-29 (session 15: 16e deployment positions)
 Current milestone: M7 — Field-validated (M0–M6 reached; M2 on Linux + Windows)
-Current phase:     Phase 17 — Data lifecycle (17a done); Phase 16's field trial (16d) is
-                   planned by the owner for the week of 2026-10-05; 16e deployment
-                   positions defined (ADR-026), not started
+Current phase:     Phase 16 — 16e done; 16d field trial planned by the owner for the week
+                   of 2026-10-05. Phase 17 in parallel (17a done, 17b next)
 Current task:      none in progress
 Next task:         17b export events and devices (CSV/JSON)
-Overall state:     Hound 1.0.0 (MIT): capture (split mode, Linux + Windows), enrichment,
-                   explainable risk with allowlist and a tunable risk file (reloadable),
-                   API, live dashboard, metrics, doctor, backup/restore, benchmark.
-                   Linux: 380 tests pass (Py 3.11 + 3.13, from the lock). Owner: Windows
-                   369 passed + 5 skipped (before the logging fix); CI green; backup works
-                   on the laptop; benchmark baseline recorded (ROADMAP §I).
+Overall state:     Hound 1.0.0 (MIT) + unreleased 16e: capture (split mode, Linux +
+                   Windows), enrichment, explainable risk with allowlist and a tunable,
+                   reloadable risk file, API, live dashboard with a coverage line,
+                   metrics, doctor, backup/restore, benchmark. Linux: 419 tests pass
+                   (Py 3.11 + 3.13, from the lock). Owner: Windows 369 passed + 5
+                   skipped (before the logging fix); CI green; backup works on the laptop.
 ```
 
 ## 1. Baseline assessment
@@ -35,9 +34,9 @@ Database        VERIFIED        WAL, indexes, retention; schema v1 in PRAGMA use
                                 ordered atomic migrations (ADR-018); owner-only files on POSIX
 Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS correlation
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
-Frontend        VERIFIED        12 page-level tests against the real API (dashboard.py 96 %,
-                                components.py 91 %); visuals still checked manually
-Testing         VERIFIED*       380 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Frontend        VERIFIED        15 page-level tests against the real API (dashboard.py 96 %);
+                                visuals checked manually (coverage line: screenshots s15)
+Testing         VERIFIED*       419 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -52,6 +51,15 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-29 s15 | Baseline before 16e: `pytest` | Linux, Py 3.11 | 380 passed (2 third-party deprecation warnings: websockets/uvicorn) |
+| 2026-09-29 s15 | Default BPF vs. an IPv6 SYN (`tcpdump -r` on crafted frames) | libpcap 1.10.4 | IPv4 SYN and IPv6 DNS matched; **IPv6 SYN not matched** → the "IPv6 connection attempts" blind spot is stated only when the default filter is in use |
+| 2026-09-29 s15 | Premise check while writing tests: are DNS answers stored (router counted as a device)? | Linux | **no** — answers only feed the DNS cache; the first draft's docstrings claimed otherwise and were corrected; the laptop test now guards the end-to-end behaviour |
+| 2026-09-29 s15 | Coverage query at 250 k rows, all within 24 h | Linux, Py 3.11 | with a packet-type filter: 300–390 ms (index on `packet_type` + temp B-tree); without it: 84–107 ms (covering `(source_ip, timestamp)` index) → filter dropped (every stored event is a lookup or connection attempt) |
+| 2026-09-29 s15 | Mutation check (12: IPv6 counted as devices, no 24 h window, no minimum span, public addresses counted, gateway single device not flagged, demo judged, custom filter ignored, no cache, dashboard never warns, dashboard reloads every tick, doctor check missing, spelling not normalised) — each run under `timeout` | Py 3.11 | 12/12 caught; originals restored (full suite green afterwards) |
+| 2026-09-29 s15 | **Real server** (idle, `HOUND_DEPLOYMENT_POSITION=Gateway` in `.env`), events posted to `/api/ingest` with the token | Linux | empty: "not enough traffic"; 60 lookups by one device over 20 min → `one_device`/warning "…check that the capture runs on the LAN side"; +1 device → still cached (30 s), then `several_devices`/ok; `doctor`: "[ OK ] Deployment position  Router / gateway; does not see traffic between devices inside your network"; no WARNING/ERROR in the log |
+| 2026-09-29 s15 | Real demo server (`this_computer`, then `gateway`) + Chromium screenshots | Linux | coverage `demo`/info ("the events are synthetic…"); coverage line under the banner and the *What Hound can't see* dialog render as intended |
+| 2026-09-29 s15 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff check; ruff format (app tests scripts run.py); mypy linux/win32/darwin; compileall; smoke | Linux | 417 (before 2 extra branch tests) / 419 / 419 passed; clean; smoke all passed; `coverage.py` 100 %, `routes/coverage.py` 100 %, `dashboard.py` 96 % |
+| 2026-09-29 s15 | Py 3.13 `-W error::ResourceWarning` (Windows file-lock proxy) | lock venv 3.13 | 419 passed; ~30 unclosed-connection warnings, all allocated in **`tests/test_migrations.py` helpers** (pre-existing, `with sqlite3.connect()` without close) — none from 16e code or tests → technical debt |
 | 2026-09-28 s7 | `pytest` with 15a — **owner's Windows laptop** | Windows | **1 failed**, 283 passed, 3 skipped: `test_database_path_with_spaces_and_special_characters` — "unable to open database file" |
 | 2026-09-28 s7 | Diagnosis of that failure | Linux | real bug in `Settings.resolved_database_url` (existing since the first build): the path was put into the URL unencoded, so `%20` in a folder name was decoded to a space (Windows strips trailing spaces → cannot open; Linux silently used a *different* folder, so the Linux run passed) and `?` truncated the path |
 | 2026-09-28 s7 | After the fix: `pytest` (dev env / 3.11 lock / 3.13 lock); ruff; mypy ×3 platforms; smoke | Linux | 299 / 299 / 299 passed; clean; smoke all passed |
@@ -290,6 +298,18 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   benchmark recorded as the laptop baseline (ROADMAP §I); deployment-position principle
   recorded (ADR-026, roadmap slice 16e).
 
+- **16e Deployment positions (session 15, ADR-026):** `HOUND_DEPLOYMENT_POSITION`
+  (`auto` default, `this_computer`, `gateway`, `mirror`, `dns_server`; spelling-tolerant).
+  `app/services/coverage.py` holds the only copy of what each position sees and misses
+  (plus the blind spots of every position) and checks it against the last 24 h: local
+  IPv4 addresses that started a lookup or connection (IPv6 reported, never decisive;
+  public sources counted separately), no verdict before 50 events over 15 min, demo never
+  judged, mismatch = warning with the likely cause. Surfaces: `GET /api/coverage` (30 s
+  cache), a dashboard coverage line (amber on mismatch) with a *What Hound can't see*
+  dialog, a `doctor` line (12 checks now), README §9 *Where to run Hound*, `.env.example`.
+  39 new tests (`tests/test_coverage.py` 36 incl. a drift guard against README and
+  `.env.example`; 3 dashboard), mutation-checked.
+
 ## 4. In progress
 - Nothing.
 
@@ -298,14 +318,12 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
    via API endpoints and/or `python run.py export`, streaming so large exports stay within
    bounded memory; CSV safe against formula injection (a domain starting with `=`, `+`,
    `-`, `@` must not execute in a spreadsheet). For the field-trial review. Unblocked.
-2. 16e deployment positions (ADR-026): the owner picks the position; `doctor`, the
-   dashboard and the README state what it can and cannot see; infer "this computer only"
-   from traffic where possible. Best done before the field trial.
-3. 16d field trial + tuning (owner: week of 2026-10-05).
-4. Owner: if an older `.env` was copied from `.env.example`, remove its `HOUND_RISK_*`
-   lines (or `python run.py doctor` shows them as overrides).
-4. Owner: run `python scripts/benchmark.py` on the Windows laptop once, to record a
-   baseline for the machine that will actually run Hound.
+2. 16d field trial + tuning (owner: week of 2026-10-05). Before starting: set
+   `HOUND_DEPLOYMENT_POSITION` in `.env` and check the dashboard's coverage line after
+   ~15 minutes of traffic.
+3. Owner: re-run `pytest` (expect 410 passed, 5 skipped on Windows — 4 Linux-only
+   folder-name cases and 5 POSIX file-mode tests are skipped/not generated) and
+   `python scripts/benchmark.py` (peak memory should now show a number).
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
@@ -338,11 +356,17 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   Windows branch runs only on Windows).
 - `doctor`'s database-writability check uses `os.access`, which ignores Windows ACL
   details; a false "writable" is possible there (the server then reports the real error).
-- The test suite now takes ~21–24 s: dashboard ~9.7 s, daemon ~4.5 s, doctor ~3 s (2 s
+- `tests/test_migrations.py` helpers open SQLite with `with sqlite3.connect()` (commits,
+  does not close): ~30 `ResourceWarning`s on Py 3.13. Same pattern that broke the backup
+  test on Windows (s13); the Windows run passes today, but it should get `closing()`.
+- The dashboard's *Devices* tile counts every address in the device table; the coverage
+  check counts only local IPv4 addresses from the last 24 h. Both are correct for what
+  they say, but the two numbers can differ; the coverage dialog states its own basis.
+- The test suite now takes ~45–55 s here (419 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
   of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
 - The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,
-  `_render_pipeline`) to avoid waiting on 2–5 s UI timers. Cheap to maintain; if the page
+  `_render_pipeline`, `_slow_tick`, `_load_coverage`) to avoid waiting on 2–60 s UI timers. Cheap to maintain; if the page
   is refactored, prefer injectable intervals.
 - The dashboard tests depend on `nicegui.testing.user_simulation` (NiceGUI ≥ 2.x API).
   A NiceGUI major upgrade may need harness changes; the lock file (14.3a) pins it.
@@ -355,7 +379,10 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 
 ## 8. Known limitations (product)
 - Country data is **simulated** (ADR-008).
-- Only traffic visible to the capture interface is seen (switched/Wi-Fi networks).
+- Only traffic visible to the capture interface is seen (switched/Wi-Fi networks); what
+  each deployment position sees is now stated in the product (ADR-026). The coverage
+  check is a heuristic: VMs, containers and inbound connections add addresses, and a
+  router forwarding DNS hides devices from a DNS-server position.
 - Default BPF catches IPv4 SYNs only; the IPv6 clause is documented, not default.
 - Encrypted DNS (DoH/DoT/DoQ) hides domain names.
 - Risk levels are heuristics, not malware detection; not yet tuned on real traffic.

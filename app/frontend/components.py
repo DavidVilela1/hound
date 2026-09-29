@@ -18,6 +18,9 @@ body.body--dark .hound-info { background: #16325c; color: #dbe7ff; }
 .kpi-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
 .hound-table { width: 100%; }
 .hound-table td { font-variant-numeric: tabular-nums; }
+.hound-coverage { background: rgba(100, 116, 139, .12); }
+.hound-coverage-warning { background: #fff4d6; color: #5c4200; }
+body.body--dark .hound-coverage-warning { background: #4a3a10; color: #ffe9b0; }
 .hound-muted { opacity: .7; font-size: .8rem; }
 .hound-kv { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; }
 .hound-kv .k { opacity: .65; }

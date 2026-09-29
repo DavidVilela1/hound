@@ -294,10 +294,18 @@ M6 stays open until its exit criteria are met.*
 ### Phase 16 — Field trial & detection tuning → M7
 * **Slices:** 16a allowlist — **DONE** (ADR-021) · 16b risk settings from an optional TOML
   file — **DONE** (ADR-022) · 16c blocklist/allowlist/risk-settings reload without restart
-  — **DONE** (ADR-023) · **16e deployment positions** (ADR-026: the owner picks where
-  Hound runs; Hound states what that position can and cannot see — in `doctor`, the
-  dashboard and the README) · 16d field trial + tuning (needs the owner's monitoring
-  position; owner plans it for the week of 2026-10-05).
+  — **DONE** (ADR-023) · 16e deployment positions — **DONE** (ADR-026) · **16d field
+  trial + tuning ← next in this phase** (needs the owner's monitoring position; owner
+  plans it for the week of 2026-10-05).
+* **16e outcome (2026-09-29):** `HOUND_DEPLOYMENT_POSITION` (`this_computer`, `gateway`,
+  `mirror`, `dns_server`; default `auto`); `app/services/coverage.py` states what each
+  position sees and misses and checks it against the last 24 h (local IPv4 addresses that
+  started a lookup or connection; no verdict before 50 events over 15 min; demo never
+  judged). Shown in the dashboard (coverage line + dialog, amber on mismatch),
+  `GET /api/coverage`, `doctor` and README §9. Verified on a real server: gateway + one
+  device → warning "check the LAN side"; a second device → "as expected".
+  For 16d: set the position in `.env` before the trial, so the dashboard's blind-spot
+  list matches the trial setup.
 * **Tasks:** run on the owner's network ≥ 7 days (split mode); review every
   suspicious/dangerous event; add an **allowlist** (domains/devices never flagged);
   load signal weights/thresholds from an optional TOML file (stdlib `tomllib`, no new

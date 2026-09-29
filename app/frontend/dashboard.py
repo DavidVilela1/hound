@@ -48,6 +48,7 @@ FLUSH_SECONDS = 0.5
 STATS_SECONDS = 2.0
 SLOW_SECONDS = 5.0
 STATS_MAX_AGE = 10.0
+COVERAGE_SECONDS = 60.0
 DISCLAIMER = (
     "Risk levels summarise indicators associated with elevated risk; they are heuristics, not proof of "
     "compromise. Country data is simulated unless a real GeoIP source is configured. "
@@ -66,6 +67,8 @@ class DashboardPage:
         self._slow_dirty = True
         self._last_stats = 0.0
         self._last_poll = 0.0
+        self._last_coverage = 0.0
+        self._coverage: dict[str, Any] | None = None
         self._missed = 0
         self._min_level = "safe"
         self._paused = False
@@ -81,6 +84,7 @@ class DashboardPage:
             self.error_banner.set_visibility(False)
             self.info_banner = ui.label("").classes("w-full q-pa-sm rounded hound-info")
             self.info_banner.set_visibility(False)
+            self._coverage_row()
             self._kpis()
             with ui.tabs().classes("w-full").props("align=left inline-label") as tabs:
                 feed_tab = ui.tab("feed", label="Live feed", icon="bolt")
@@ -115,6 +119,16 @@ class DashboardPage:
                 self.source_badge = ui.badge("source …", color="blue-grey")
                 self.live_badge = ui.badge("connecting…", color="grey")
                 ui.button(icon="contrast", on_click=dark.toggle).props("flat round color=white").tooltip("Toggle theme")
+
+    def _coverage_row(self) -> None:
+        """What this deployment position can see, always on the page (ADR-026)."""
+        with ui.row().classes("w-full items-center gap-2 q-px-sm q-py-xs rounded no-wrap hound-coverage") as row:
+            ui.icon("visibility").classes("text-lg")
+            self.coverage_label = ui.label("Checking what Hound can see…").classes("grow")
+            ui.button("What Hound can't see", on_click=self._open_coverage).props("flat dense no-caps").mark(
+                "coverage-details"
+            )
+        self.coverage_row = row
 
     def _kpis(self) -> None:
         with ui.row().classes("w-full gap-3 items-stretch"):
@@ -196,6 +210,8 @@ class DashboardPage:
             await self._load_feed()
 
     async def _slow_tick(self) -> None:
+        if time.monotonic() - self._last_coverage > COVERAGE_SECONDS:
+            await self._load_coverage()
         if self._slow_dirty:
             self._slow_dirty = False
             await self._load_devices()
@@ -207,6 +223,7 @@ class DashboardPage:
         await self._load_feed()
         await self._load_devices()
         await self._load_countries()
+        await self._load_coverage()
 
     def _show_error(self, message: str) -> None:
         self.error_banner.set_text(f"⚠ {message}. Retrying automatically…")
@@ -299,6 +316,21 @@ class DashboardPage:
         simulated = " · geolocation is SIMULATED (not authoritative)" if payload.get("simulated") else ""
         self.country_note.set_text(f"{payload.get('total_events', 0):,} events{simulated}")
 
+    async def _load_coverage(self) -> None:
+        self._last_coverage = time.monotonic()
+        try:
+            coverage = await self.api.coverage()
+        except ApiError:
+            return  # the stats timer already reports an unreachable API
+        self._coverage = coverage
+        warning = coverage.get("assessment_level") == "warning"
+        prefix = "⚠ " if warning else ""
+        self.coverage_label.set_text(f"{prefix}{coverage.get('label')}: {coverage.get('assessment')}")
+        self.coverage_row.classes(
+            add="hound-coverage-warning" if warning else "hound-coverage",
+            remove="hound-coverage" if warning else "hound-coverage-warning",
+        )
+
     # ------------------------------------------------------------------ interactions
     async def _set_min_level(self, level: str) -> None:
         self._min_level = level
@@ -328,6 +360,37 @@ class DashboardPage:
                 ui.label("Event details").classes("text-h6")
                 ui.button(icon="close", on_click=self.detail_dialog.close).props("flat round")
             event_details(ui.column().classes("w-full gap-1"), event)
+        self.detail_dialog.open()
+
+    async def _open_coverage(self) -> None:
+        if self._coverage is None:
+            await self._load_coverage()
+        coverage = self._coverage
+        if coverage is None:
+            ui.notify("Could not load coverage information", type="negative")
+            return
+        observed = coverage.get("observed") or {}
+        self.detail_dialog.clear()
+        with self.detail_dialog, ui.card().classes("w-full").style("max-width: 760px"):
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label(f"What Hound can see · {coverage.get('label')}").classes("text-h6")
+                ui.button(icon="close", on_click=self.detail_dialog.close).props("flat round")
+            ui.label(str(coverage.get("summary") or ""))
+            ui.label(str(coverage.get("assessment") or "")).classes("text-weight-medium")
+            if coverage.get("sees"):
+                ui.label("Sees").classes("text-subtitle2 q-mt-sm")
+                for line in coverage["sees"]:
+                    ui.label(f"• {line}")
+            ui.label("Does not see").classes("text-subtitle2 q-mt-sm")
+            for line in coverage.get("misses") or []:
+                ui.label(f"• {line}")
+            devices = ", ".join(observed.get("busiest_ipv4_devices") or []) or "none"
+            ui.label(
+                f"Last {observed.get('window_hours', 24)} h: {observed.get('lookups_and_connections', 0):,} lookups "
+                f"and connections · {observed.get('ipv4_devices', 0)} IPv4 devices ({devices}) · "
+                f"{observed.get('ipv6_addresses', 0)} IPv6 addresses. Set the position with "
+                "HOUND_DEPLOYMENT_POSITION (README: Where to run Hound)."
+            ).classes("hound-muted q-mt-sm")
         self.detail_dialog.open()
 
     async def _open_device(self, row: dict[str, Any] | None) -> None:

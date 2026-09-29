@@ -6,7 +6,14 @@ All notable changes to Hound are recorded here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **Deployment positions** (ADR-026): `HOUND_DEPLOYMENT_POSITION` = `this_computer`,
+  `gateway`, `mirror` or `dns_server` (default `auto`). Hound says what that position can
+  and cannot see — a coverage line on the dashboard with a *What Hound can't see* dialog,
+  `GET /api/coverage`, a `doctor` line and README §9 *Where to run Hound* — and checks it
+  against the last 24 h of traffic: e.g. a router position that has seen only one device
+  is flagged with "check that the capture runs on the LAN side". With the position unset,
+  Hound infers it ("most likely just the computer it runs on").
 
 ## [1.0.0] - 2026-09-29
 

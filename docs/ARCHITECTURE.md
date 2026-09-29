@@ -189,6 +189,9 @@ tested · extension points. File references are to the current code.
   `LiveEventStream.dispatch`). `DashboardPage` takes its API client and stream as
   constructor arguments, which is what makes it testable without a server. Visual
   appearance is checked manually.
+* **Coverage line (ADR-026):** under the banners, always visible; refreshed once a minute
+  from `/api/coverage`; amber when the position and the traffic disagree; the *What Hound
+  can't see* dialog lists the position's blind spots.
 * **Extension points:** new tabs are self-contained panels on `DashboardPage`.
 
 ### 3.11 Composition & lifecycle — `app/services/runtime.py`, `app/api/app.py`, `app/cli.py`
@@ -209,7 +212,8 @@ tested · extension points. File references are to the current code.
 ### 3.11a Environment diagnostic — `app/services/doctor.py` (`doctor` command)
 * **Responsibility:** read-only checks of what Hound needs from the machine (Python,
   packages vs. `requirements.lock`, capture driver via Scapy's own detection, privileges,
-  interface, bind address, port, cloud-synced data folder, database, ingest token); one
+  interface, bind address, port, cloud-synced data folder, database, ingest token, risk
+  settings, and the deployment position as information — ADR-026); one
   status + fix per check; exit code 1 on any failure.
 * **Read-only guarantee:** never creates the database, token or directories. The database
   is opened `mode=ro`, and additionally `immutable=1` when no `-wal` file exists — plain
@@ -221,6 +225,22 @@ tested · extension points. File references are to the current code.
 * **Tests:** `tests/test_doctor.py` — each check's outcomes (platform-specific ones via
   injected inputs, so the Windows/Npcap branch runs on Linux), a real running server,
   the read-only guarantee (directory snapshot before/after), and the CLI exit codes.
+
+### 3.11b Deployment coverage — `app/services/coverage.py` (ADR-026)
+* **Responsibility:** say what the configured position (`HOUND_DEPLOYMENT_POSITION`) can
+  and cannot see, and check it against the traffic. Holds the only copy of the
+  per-position text (`PROFILES`, `ALWAYS_MISSED`), used by `GET /api/coverage`
+  (`app/api/routes/coverage.py`), the dashboard's coverage line/dialog and `doctor`.
+* **In → out:** `EventRepository.initiators_since()` (per source address: count, first,
+  last seen in the last 24 h — answered from the covering `(source_ip, timestamp)` index,
+  ≈ 90 ms at 250 k rows) → `observe()` → `evidence_of()` → `assess()` → `CoverageOut`.
+  Pure functions apart from the query; the result is cached 30 s (the dashboard asks once
+  a minute per tab).
+* **Failure modes:** a DB error propagates as 503 like every read endpoint; the dashboard
+  keeps its last coverage text (the stats timer already reports an unreachable API).
+* **Tests:** `tests/test_coverage.py` (every position × evidence, thresholds, window,
+  IPv6 handling, the drift guard against README/.env.example, API and cache), plus
+  dashboard and doctor tests.
 
 ### 3.12 Capture daemon & forwarder — `app/ingestion/daemon.py`, `forwarder.py`
 * **Responsibility:** privileged process: capture → local queue → batched POSTs.

@@ -289,3 +289,36 @@ class MetricsOut(BaseModel):
     processing: ProcessingMetrics
     websocket: WebSocketMetrics
     storage: StorageMetrics
+
+
+# ------------------------------------------------------------------------------ coverage (ADR-026)
+CoverageEvidence = Literal["demo", "not_enough_traffic", "no_local_ipv4", "one_device", "several_devices"]
+
+
+class CoverageObserved(BaseModel):
+    """What the stored traffic of the last ``window_hours`` shows: addresses that *started*
+    something (a DNS lookup or a connection attempt). DNS answers are not stored."""
+
+    window_hours: int
+    lookups_and_connections: int = Field(..., description="DNS lookups + TCP connection attempts in the window.")
+    observed_minutes: int = Field(..., description="Minutes between the first and last of them.")
+    ipv4_devices: int = Field(..., description="Local IPv4 addresses that looked up names or started connections.")
+    ipv6_addresses: int = Field(..., description="IPv6 addresses doing so (one device often uses several).")
+    public_ipv4_sources: int = Field(..., description="Public IPv4 addresses doing so (seen e.g. on a WAN side).")
+    busiest_ipv4_devices: list[str] = Field(..., description="Up to five local IPv4 addresses, busiest first.")
+
+
+class CoverageOut(BaseModel):
+    """What the configured deployment position can and cannot see, checked against the traffic."""
+
+    position: Literal["auto", "this_computer", "gateway", "mirror", "dns_server"]
+    position_set: bool = Field(..., description="False when HOUND_DEPLOYMENT_POSITION is not set (auto).")
+    label: str
+    summary: str
+    sees: list[str]
+    misses: list[str] = Field(..., description="Blind spots of this position, then those of every position.")
+    observed: CoverageObserved
+    evidence: CoverageEvidence
+    assessment: str
+    assessment_level: Literal["info", "ok", "warning"]
+    generated_at: datetime

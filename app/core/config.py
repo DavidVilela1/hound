@@ -13,6 +13,7 @@ local-only default.
 from __future__ import annotations
 
 import ipaddress
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +28,16 @@ DEFAULT_BPF_FILTER = "udp port 53 or tcp port 53 or (tcp[tcpflags] & tcp-syn != 
 LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
 VALID_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 HARD_MAX_PAGE_SIZE = 1000
+
+
+class DeploymentPosition(StrEnum):
+    """Where the capture runs, which decides what Hound can see (ADR-026)."""
+
+    AUTO = "auto"  # not stated: Hound describes what it sees from the traffic
+    THIS_COMPUTER = "this_computer"
+    GATEWAY = "gateway"
+    MIRROR = "mirror"
+    DNS_SERVER = "dns_server"
 
 
 def split_csv(value: str) -> tuple[str, ...]:
@@ -66,6 +77,10 @@ class Settings(BaseSettings):
     bpf_filter: str = Field(default=DEFAULT_BPF_FILTER, min_length=1, max_length=1024)
     ingest_token: SecretStr | None = None
     ingest_token_path: Path = Path("data/.ingest_token")
+    deployment_position: DeploymentPosition = Field(
+        default=DeploymentPosition.AUTO,
+        description="Where Hound captures: this_computer, gateway, mirror, dns_server, or auto (not stated).",
+    )
 
     # --- Pipeline ---------------------------------------------------------
     queue_max_size: int = Field(default=10_000, ge=100, le=1_000_000)
@@ -135,6 +150,15 @@ class Settings(BaseSettings):
         value = value.strip()
         if len(value) > 256 or any(ch in value for ch in "\x00\n\r"):
             raise ValueError("network_interface contains invalid characters")
+        return value
+
+    @field_validator("deployment_position", mode="before")
+    @classmethod
+    def _normalise_position(cls, value: object) -> object:
+        """Accept ``This-Computer``, ``dns server`` etc.; blank means ``auto``."""
+        if isinstance(value, str):
+            text = value.strip().lower().replace("-", "_").replace(" ", "_")
+            return text or DeploymentPosition.AUTO.value
         return value
 
     @field_validator("ingest_token", "demo_seed", mode="before")
