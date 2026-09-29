@@ -7,6 +7,11 @@ All notable changes to Hound are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Export** (ADR-027): `GET /api/export/events` (every filter of `/api/events`) and
+  `GET /api/export/devices` download all matching rows as CSV or JSON, oldest first,
+  streamed in bounded memory. The CSV opens in Excel (UTF-8 with BOM) and cannot run
+  formulas: cells starting with `=`, `+`, `-`, `@`, tab or CR get a leading `'`. The
+  dashboard has *Download CSV / JSON* links (the feed's link follows its risk filter).
 - **Deployment positions** (ADR-026): `HOUND_DEPLOYMENT_POSITION` = `this_computer`,
   `gateway`, `mirror` or `dns_server` (default `auto`). Hound says what that position can
   and cannot see — a coverage line on the dashboard with a *What Hound can't see* dialog,

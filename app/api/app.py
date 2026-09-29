@@ -14,7 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app import __version__
 from app.api.openapi import install_openapi
-from app.api.routes import admin, coverage, devices, events, health, ingest, metrics, stats, ws
+from app.api.routes import admin, coverage, devices, events, export, health, ingest, metrics, stats, ws
 from app.core.config import Settings
 from app.database.engine import DatabaseError
 from app.services.runtime import HoundRuntime
@@ -36,6 +36,7 @@ OPENAPI_TAGS = [
     {"name": "events", "description": "Enriched and scored network events."},
     {"name": "devices", "description": "Per-device aggregates."},
     {"name": "stats", "description": "Overview counters and country distribution."},
+    {"name": "export", "description": "Events and devices as CSV or JSON downloads."},
     {"name": "metrics", "description": "Loss and performance counters for each pipeline stage."},
     {"name": "coverage", "description": "What this deployment position can and cannot see."},
     {"name": "ingest", "description": "Authenticated endpoint used by the capture daemon."},
@@ -95,6 +96,7 @@ def create_app(settings: Settings, runtime: HoundRuntime | None = None, *, dashb
         health.router,
         events.router,
         devices.router,
+        export.router,
         stats.router,
         metrics.router,
         coverage.router,

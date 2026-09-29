@@ -98,6 +98,20 @@ class EventRepository:
         ).all()
         return list(rows), int(total)
 
+    def max_id(self) -> int:
+        return int(self._session.scalar(select(func.max(EventRecord.id))) or 0)
+
+    def export_page(self, flt: EventFilter, *, after_id: int, up_to_id: int, limit: int) -> list[EventRecord]:
+        """Matching events with ``after_id < id <= up_to_id``, oldest first (keyset paging).
+
+        ``up_to_id`` is fixed when an export starts, so events stored meanwhile are not
+        included and paging never shifts; each page is an independent short query.
+        """
+        query = self._apply_filter(select(EventRecord), flt).where(
+            EventRecord.id > after_id, EventRecord.id <= up_to_id
+        )
+        return list(self._session.scalars(query.order_by(EventRecord.id).limit(limit)).all())
+
     def count(self, flt: EventFilter | None = None) -> int:
         query = self._apply_filter(select(func.count(EventRecord.id)), flt or EventFilter())
         return int(self._session.scalar(query) or 0)
@@ -278,3 +292,15 @@ class DeviceRepository:
 
     def count(self) -> int:
         return int(self._session.scalar(select(func.count(DeviceRecord.id))) or 0)
+
+    def max_id(self) -> int:
+        return int(self._session.scalar(select(func.max(DeviceRecord.id))) or 0)
+
+    def export_page(
+        self, *, risk_level: RiskLevel | None, after_id: int, up_to_id: int, limit: int
+    ) -> list[DeviceRecord]:
+        """Devices with ``after_id < id <= up_to_id`` in first-seen-by-Hound order (keyset paging)."""
+        query = select(DeviceRecord).where(DeviceRecord.id > after_id, DeviceRecord.id <= up_to_id)
+        if risk_level is not None:
+            query = query.where(DeviceRecord.risk_level == RiskLevel(risk_level).value)
+        return list(self._session.scalars(query.order_by(DeviceRecord.id).limit(limit)).all())

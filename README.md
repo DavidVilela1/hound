@@ -526,6 +526,8 @@ Interactive docs: <http://127.0.0.1:8000/docs> (Swagger UI) and
 | `GET /api/devices/{ip}` | one device incl. recent observations | – |
 | `GET /api/stats` | totals, per-level counts, last-minute count, pipeline status | – |
 | `GET /api/stats/countries` | share of events by destination country | `include_local` (default false), `since_minutes` |
+| `GET /api/export/events` | every matching event as a download, oldest first, no paging (streamed) | `format` = `csv` (default) \| `json`, plus every filter of `GET /api/events` |
+| `GET /api/export/devices` | every device as a download, in the order first seen | `format`, `risk_level` |
 | `GET /api/coverage` | the deployment position, what it can and cannot see, and a check against the last 24 h of traffic (§9) | – |
 | `GET /api/metrics` | loss per pipeline stage + queue/latency/storage counters (no domains or addresses) | – |
 | `POST /api/ingest` | capture-daemon ingest (≤ 1000 events, ≤ 2 MB), optionally with the daemon's own counters | header `X-Hound-Token` |
@@ -542,7 +544,31 @@ curl "http://127.0.0.1:8000/api/events?limit=20&min_risk_level=suspicious"
 curl "http://127.0.0.1:8000/api/events?source_ip=192.168.1.57&since=2026-01-01T00:00:00Z"
 curl "http://127.0.0.1:8000/api/devices?sort=risk&limit=10"
 curl "http://127.0.0.1:8000/api/stats/countries?include_local=true"
+curl -o flagged.csv "http://127.0.0.1:8000/api/export/events?min_risk_level=suspicious"
 ```
+
+**Exports** (for reviewing a field trial in a spreadsheet, or keeping a record):
+`/api/export/events` returns *all* events matching the same filters as
+`/api/events` — oldest first, no page limit — and `/api/export/devices` all
+devices. Open the URL in a browser to download, or use the *Download* links on
+the dashboard; in PowerShell:
+`Invoke-WebRequest "http://127.0.0.1:8000/api/export/events?min_risk_level=suspicious" -OutFile flagged.csv`.
+
+* **JSON** is an array of the same objects as the API returns.
+* **CSV** has one row per event with the same fields, plus `risk_reason_codes`
+  (`CODE;CODE`) and `risk_reasons` (`description (+points) | …`); devices get
+  `observation_codes` and `observations`. It is UTF-8 with a byte-order mark
+  (so Excel shows non-ASCII text correctly) and comma-separated. In Excel with a
+  locale that uses `;` as list separator (e.g. Portuguese), open it with
+  *Data → From Text/CSV* instead of double-clicking.
+* Any cell a spreadsheet would run as a formula (starting with `=`, `+`, `-`,
+  `@`, tab or carriage return) is written with a leading `'` — captured names
+  are untrusted input.
+* Streamed page by page, so memory stays flat (measured: 250 000 events → 56 MB
+  of CSV in ~21 s, server memory unchanged). Events stored after the download
+  starts are not included. If the database fails mid-download the file is cut
+  short: a JSON file then fails to parse, a CSV file just ends early (the
+  server logs "Export interrupted").
 
 **Did we lose anything?** `GET /api/metrics` answers it: `loss.total_events_lost`
 is the sum of events lost at every stage — the capture daemon's queue, its
@@ -580,6 +606,8 @@ Open <http://127.0.0.1:8000>.
   risk indicator and its points.
 * **Devices** – IP, first/last seen, event count, risk score and level. Click a
   device for its counters, recent observations and last 100 events.
+* **Downloads** – *Download CSV / JSON* on the live feed exports every stored
+  event matching the feed's risk filter; the Devices tab exports all devices.
 * **Countries** – bar chart and table of the share of events by destination
   country (simulated geolocation), optionally including the local network.
 
@@ -691,7 +719,7 @@ hound/
 │   │   ├── app.py             # FastAPI factory: middleware, lifespan, routers
 │   │   ├── deps.py            # dependency helpers, input validation
 │   │   ├── openapi.py         # OpenAPI customisation
-│   │   └── routes/            # health, events, devices, stats, metrics, coverage, ingest, admin, ws
+│   │   └── routes/            # health, events, export, devices, stats, metrics, coverage, ingest, admin, ws
 │   ├── core/
 │   │   ├── config.py          # Settings (env/.env/CLI), path resolution
 │   │   ├── logging_config.py  # text/JSON structured logging
@@ -739,6 +767,7 @@ hound/
 │       ├── processing.py      # worker: enrich → score → persist → publish
 │       ├── store.py           # transactional persistence + retention
 │       ├── queries.py         # read services for the API
+│       ├── export.py          # CSV/JSON export, streamed (ADR-027)
 │       ├── coverage.py        # what each deployment position can see (ADR-026)
 │       ├── broadcaster.py     # WebSocket fan-out
 │       └── mappers.py         # ORM → schema
@@ -783,6 +812,9 @@ hound/
 * **Authenticated ingest.** `POST /api/ingest` requires a random token
   (constant-time comparison), checked **before** the body is read; bodies are
   capped at 2 MB and 1000 events and fully validated.
+* **Exports cannot run formulas.** CSV cells that a spreadsheet would evaluate
+  (`=`, `+`, `-`, `@`, tab, CR at the start) are prefixed with `'`, because
+  domains and interface names come from the network or the ingest API.
 * **Input validation.** All query/path parameters are typed and bounded; IPs
   are parsed with `ipaddress`; domains are syntax-checked.
 * **No injection.** SQL goes through SQLAlchemy expressions with bound

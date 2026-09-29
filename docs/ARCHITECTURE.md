@@ -167,8 +167,12 @@ tested · extension points. File references are to the current code.
 * **Failure modes:** DB errors → 503; bad input → 422; bad token → 401; big body → 413;
   foreign Host → 400.
 * **Tests:** `tests/test_api.py`, `tests/test_frontend.py` (client contract).
-* **Extension points:** versioned prefix (`/api/v2`) if a breaking change is ever needed;
-  export endpoints.
+* **Exports (ADR-027):** `app/api/routes/export.py` → `app/services/export.py`
+  (`ExportService` keyset-pages `EventRepository.export_page` / `DeviceRepository.export_page`
+  up to an id fixed at request time; `csv_stream` / `json_stream` write 1 000-row chunks;
+  `csv_cell` neutralises formulas). Event filters are one dependency (`event_filter` in
+  `routes/events.py`) shared by `/api/events` and `/api/export/events`.
+* **Extension points:** versioned prefix (`/api/v2`) if a breaking change is ever needed.
 
 ### 3.9 Realtime event bus — `app/services/broadcaster.py`, `app/api/routes/ws.py`
 * **Responsibility:** push new events to subscribers without polling the DB.

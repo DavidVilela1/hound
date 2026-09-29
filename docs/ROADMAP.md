@@ -318,7 +318,12 @@ M6 stays open until its exit criteria are met.*
 ### Phase 17 — Data lifecycle
 *Sequencing note (2026-09-29): 16d needs the owner's monitoring position; Phase 17 starts
 meanwhile. Slices: 17a `backup` command + verified restore — **DONE** (ADR-024) ·
-**17b export (CSV/JSON) ← next task** · 17c device-row expiry + time-based retention · 17d periodic `PRAGMA optimize`.*
+17b export (CSV/JSON) — **DONE** (ADR-027) · **17c device-row expiry + time-based
+retention ← next task** · 17d periodic `PRAGMA optimize`.*
+* **17b outcome (2026-09-29):** `GET /api/export/events` (all `/api/events` filters) and
+  `GET /api/export/devices`, CSV or JSON, streamed in keyset pages (server memory flat
+  at 250 k rows: 83 MiB; CSV ≈ 12 k rows/s, JSON ≈ 14 k rows/s), snapshot at request
+  time, formula-safe CSV with BOM; dashboard *Download* links follow the feed filter.
 * **Tasks:** `hound db backup` (SQLite online backup API), CSV/JSON export endpoint,
   device-row expiry, optional time-based retention, periodic `PRAGMA optimize`.
 * **Prereq:** 14.2. **Acceptance:** restore from backup verified by test.

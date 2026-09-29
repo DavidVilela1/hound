@@ -5,18 +5,18 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (session 15: 16e deployment positions)
+Last updated:      2026-09-29 (session 16: 17b export)
 Current milestone: M7 — Field-validated (M0–M6 reached; M2 on Linux + Windows)
-Current phase:     Phase 16 — 16e done; 16d field trial planned by the owner for the week
-                   of 2026-10-05. Phase 17 in parallel (17a done, 17b next)
+Current phase:     Phase 17 — Data lifecycle (17a, 17b done; 17c next). Phase 16: 16e
+                   done; 16d field trial planned by the owner for the week of 2026-10-05
 Current task:      none in progress
-Next task:         17b export events and devices (CSV/JSON)
-Overall state:     Hound 1.0.0 (MIT) + unreleased 16e: capture (split mode, Linux +
+Next task:         17c device-row expiry + time-based retention
+Overall state:     Hound 1.0.0 (MIT) + unreleased 16e, 17b: capture (split mode, Linux +
                    Windows), enrichment, explainable risk with allowlist and a tunable,
-                   reloadable risk file, API, live dashboard with a coverage line,
-                   metrics, doctor, backup/restore, benchmark. Linux: 419 tests pass
-                   (Py 3.11 + 3.13, from the lock). Owner: Windows 369 passed + 5
-                   skipped (before the logging fix); CI green; backup works on the laptop.
+                   reloadable risk file, API, live dashboard with coverage line and
+                   downloads, CSV/JSON export, metrics, doctor, backup/restore, benchmark.
+                   Linux: 459 tests pass (Py 3.11 + 3.13, from the lock). Owner: Windows
+                   369 passed + 5 skipped (before the logging fix); CI green.
 ```
 
 ## 1. Baseline assessment
@@ -34,9 +34,9 @@ Database        VERIFIED        WAL, indexes, retention; schema v1 in PRAGMA use
                                 ordered atomic migrations (ADR-018); owner-only files on POSIX
 Enrichment      VERIFIED        Blocklist (suffix matching), simulated geo, DNS correlation
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
-Frontend        VERIFIED        15 page-level tests against the real API (dashboard.py 96 %);
+Frontend        VERIFIED        16 page-level tests against the real API (dashboard.py 96 %);
                                 visuals checked manually (coverage line: screenshots s15)
-Testing         VERIFIED*       419 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       459 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -51,6 +51,14 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-29 s16 | Baseline: `pytest`; ruff check + format (app tests scripts run.py); mypy | Linux, Py 3.11 | 419 passed; clean; clean |
+| 2026-09-29 s16 | Export endpoints by hand (TestClient) | Py 3.11 | CSV with BOM + `Content-Disposition`; an ingest-supplied interface `=cmd\|' /C calc'!A0` was **accepted by ingest** and came out as `'=cmd…` (formula neutralised); `format=xml` and `since > until` → 422 |
+| 2026-09-29 s16 | `/api/events` OpenAPI parameters after moving the filters into a shared dependency | Py 3.11 | same 12 parameters (now also a test) |
+| 2026-09-29 s16 | Mutation check (16: no formula prefix, leading spaces unchecked, no BOM, no snapshot bound, filters ignored, stops after first page, keyset off by one, newest first, whole table read eagerly, CSV not chunked, JSON not chunked, JSON per item, JSON not closed, error not logged, dashboard link ignores filter, device risk filter ignored) — each under `timeout` | Py 3.11 | 16/16 caught. The "CSV not chunked" test first used an endless generator, so the mutant hung until `timeout` → rewritten to raise instead, now fails in 3 s |
+| 2026-09-29 s16 | **Real server** (subprocess, dashboard off), events pre-filled, `httpx` streaming download; server `VmHWM` before/after | Linux, Py 3.11 | 25 k rows: CSV 5.6 MB 2.2 s, JSON 13.4 MB 9.0 s; 250 k rows: CSV 56.4 MB 21.6 s, JSON 134 MB **87.6 s** — peak RSS 77 → 83 MiB in every case (bounded). JSON was one chunk per item → batched per 1 000 → 250 k JSON 17.7 s (14.1 k rows/s), CSV 20.7 s (12.1 k rows/s), RSS still 83 MiB |
+| 2026-09-29 s16 | **Real demo server** + `curl` + Chromium | Linux | `min_risk_level=suspicious` CSV: 72 rows, only suspicious/dangerous, ids ascending, headers `attachment; filename="hound-events-…csv"`, `no-store`; devices JSON 6 devices; dashboard: *Dangerous* filter then *Download CSV* in the browser → `hound-events-….csv` with 44 rows, all dangerous; 3 "Export finished" log lines, no WARNING/ERROR |
+| 2026-09-29 s16 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff check + format; mypy linux/win32/darwin (mypy 2.3.1 from the lock) + 3.11 lock; compileall; smoke | Linux | 459 / 459 / 459 passed; clean; **mypy 2.3.1 found 2 errors the dev env's mypy 1.20 did not** (`responses=` dict type) → annotated; then clean ×4; smoke all passed; `export.py` 100 %, `routes/export.py` 100 %, `routes/events.py` 100 % |
+| 2026-09-29 s16 | Py 3.13 `-W error::ResourceWarning` on the export + dashboard tests | lock venv 3.13 | 0 ResourceWarnings |
 | 2026-09-29 s15 | Baseline before 16e: `pytest` | Linux, Py 3.11 | 380 passed (2 third-party deprecation warnings: websockets/uvicorn) |
 | 2026-09-29 s15 | Default BPF vs. an IPv6 SYN (`tcpdump -r` on crafted frames) | libpcap 1.10.4 | IPv4 SYN and IPv6 DNS matched; **IPv6 SYN not matched** → the "IPv6 connection attempts" blind spot is stated only when the default filter is in use |
 | 2026-09-29 s15 | Premise check while writing tests: are DNS answers stored (router counted as a device)? | Linux | **no** — answers only feed the DNS cache; the first draft's docstrings claimed otherwise and were corrected; the laptop test now guards the end-to-end behaviour |
@@ -310,20 +318,33 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   39 new tests (`tests/test_coverage.py` 36 incl. a drift guard against README and
   `.env.example`; 3 dashboard), mutation-checked.
 
+- **17b Export (session 16, ADR-027):** `GET /api/export/events` (every `/api/events`
+  filter, through one shared `event_filter` dependency) and `GET /api/export/devices`
+  (`risk_level`), `format=csv|json`. `app/services/export.py`: keyset pages of 1 000 rows,
+  each in its own session, up to an id fixed at request time (DB outage → 503 before
+  streaming; later rows excluded); oldest first; CSV = RFC 4180, UTF-8 with BOM,
+  formula-like cells prefixed with `'`; JSON = one array in 1 000-item chunks. Dashboard:
+  *Download CSV / JSON* on the feed (follows the risk filter) and the Devices tab.
+  40 new tests (`tests/test_export.py` 39, dashboard 1), mutation-checked; bounded
+  memory measured on a real server.
+
 ## 4. In progress
 - Nothing.
 
 ## 5. Next (in order — only the first is "the next task")
-1. **17b Export.** Events (filterable like `/api/events`) and devices as CSV and JSON,
-   via API endpoints and/or `python run.py export`, streaming so large exports stay within
-   bounded memory; CSV safe against formula injection (a domain starting with `=`, `+`,
-   `-`, `@` must not execute in a spreadsheet). For the field-trial review. Unblocked.
+1. **17c Device-row expiry + time-based retention.** Today `devices` rows are never
+   removed and their counters stay lifetime totals after retention prunes their events;
+   retention is by row count only. Add an optional age limit for events
+   (`HOUND_RETENTION_DAYS`) and remove devices with no stored events left, applied with
+   the existing periodic prune; keep counters and the dashboard consistent. Unblocked.
 2. 16d field trial + tuning (owner: week of 2026-10-05). Before starting: set
-   `HOUND_DEPLOYMENT_POSITION` in `.env` and check the dashboard's coverage line after
-   ~15 minutes of traffic.
-3. Owner: re-run `pytest` (expect 410 passed, 5 skipped on Windows — 4 Linux-only
-   folder-name cases and 5 POSIX file-mode tests are skipped/not generated) and
+   `HOUND_DEPLOYMENT_POSITION` in `.env`; check the dashboard's coverage line after
+   ~15 minutes; review flagged events with
+   `/api/export/events?min_risk_level=suspicious` (CSV).
+3. Owner: re-run `pytest` (expect 450 passed, 5 skipped on Windows — 4 Linux-only
+   folder-name cases are not generated and 5 POSIX file-mode tests are skipped) and
    `python scripts/benchmark.py` (peak memory should now show a number).
+4. Test debt: close the SQLite connections in `tests/test_migrations.py` helpers (§7).
 
 ## 6. Blocked / needs owner input
 | Item | Needed | Blocks |
@@ -346,6 +367,8 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 - `devices` rows are never expired; counters are lifetime totals even after event
   retention prunes old events → 17.
 - Backups accumulate in `data/backups/` (no rotation or pruning yet).
+- An export of 250 k rows occupies one API thread-pool worker for ~20 s; several at
+  once would slow other requests. Fine for one local user; revisit only with evidence.
 - `restore` detects a running server only on the configured port; a server started on
   another port is not detected (on Windows the file move then fails and is rolled back).
 - `/api/stats` uses `COUNT(*)` scans (71 ms at the 250 k cap) → only if metrics show need.
@@ -362,7 +385,7 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 - The dashboard's *Devices* tile counts every address in the device table; the coverage
   check counts only local IPv4 addresses from the last 24 h. Both are correct for what
   they say, but the two numbers can differ; the coverage dialog states its own basis.
-- The test suite now takes ~45–55 s here (419 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
+- The test suite now takes ~45–60 s here (459 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
   of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
 - The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,
@@ -397,6 +420,9 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   sync can lock SQLite; documented in the README with workarounds.
 - A database written by a newer Hound cannot be opened by an older one (by design; no
   downgrades).
+- Exports: a CSV cut short by a database error mid-download looks complete (only the
+  server log says "Export interrupted"; a cut JSON file fails to parse). Semicolon-locale
+  Excel needs *Data → From Text/CSV* to split the comma-separated columns.
 
 ## 9. How to verify this file is still true
 ```bash

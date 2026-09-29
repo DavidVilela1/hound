@@ -56,6 +56,16 @@ DISCLAIMER = (
 )
 
 
+EXPORT_EVENTS = "/api/export/events"
+EXPORT_DEVICES = "/api/export/devices"
+
+
+def events_export_url(fmt: str, min_level: str) -> str:
+    """Download URL for the feed's current filter ("safe" = everything)."""
+    level = "" if min_level == "safe" else f"&min_risk_level={min_level}"
+    return f"{EXPORT_EVENTS}?format={fmt}{level}"
+
+
 class DashboardPage:
     """One browser tab's dashboard state."""
 
@@ -130,6 +140,10 @@ class DashboardPage:
             )
         self.coverage_row = row
 
+    @staticmethod
+    def _download_link(text: str, url: str, mark: str) -> ui.link:
+        return ui.link(text, url).props("download").classes("text-sm").mark(mark)
+
     def _kpis(self) -> None:
         with ui.row().classes("w-full gap-3 items-stretch"):
             self.kpi_total = kpi_card("Total events", "stacked_line_chart")
@@ -148,6 +162,12 @@ class DashboardPage:
             )
             ui.switch("Pause", on_change=lambda e: self._set_paused(bool(e.value)))
             self.feed_note = ui.label("").classes("hound-muted")
+            ui.space()
+            ui.label("Download:").classes("hound-muted")
+            self.export_events = {
+                fmt: self._download_link(fmt.upper(), events_export_url(fmt, "safe"), f"download-events-{fmt}")
+                for fmt in ("csv", "json")
+            }
         self.feed_loading = ui.spinner(size="lg")
         self.feed_table = risk_table(FEED_COLUMNS, "id", "No events yet — waiting for traffic…", rows_per_page=25)
         self.feed_table.mark("feed-table")  # stable handle for tests
@@ -158,6 +178,10 @@ class DashboardPage:
         self.devices_table = risk_table(DEVICE_COLUMNS, "ip", "No devices observed yet.", rows_per_page=20)
         self.devices_table.mark("devices-table")
         self.devices_table.on("rowClick", lambda e: self._open_device(row_from_click(e.args)))
+        with ui.row().classes("items-center gap-2"):
+            ui.label("Download all devices:").classes("hound-muted")
+            for fmt in ("csv", "json"):
+                self._download_link(fmt.upper(), f"{EXPORT_DEVICES}?format={fmt}", f"download-devices-{fmt}")
         ui.label(
             "Device risk score = highest event score within the device risk window. Click a device to inspect it."
         ).classes("hound-muted")
@@ -334,6 +358,8 @@ class DashboardPage:
     # ------------------------------------------------------------------ interactions
     async def _set_min_level(self, level: str) -> None:
         self._min_level = level
+        for fmt, link in self.export_events.items():  # downloads follow the feed's risk filter
+            link.props["href"] = events_export_url(fmt, level)
         await self._load_feed()
 
     async def _set_paused(self, paused: bool) -> None:

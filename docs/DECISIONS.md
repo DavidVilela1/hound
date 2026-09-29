@@ -426,3 +426,31 @@ change their status or add a "Revisited" note.
 * **Rejected:** counting every row of the device table (an address that only *receives*
   connections would also count); a hard verdict on one device (VMs, containers and
   inbound connections legitimately add addresses, so the wording is "most likely"/"check").
+
+## ADR-027 — Export: streamed API downloads, spreadsheet-safe CSV
+* **Context:** the field trial (16d) needs flagged events reviewed outside the dashboard
+  (spreadsheet, notes), and a record kept. The event table holds up to 250 k rows by
+  default (up to 50 M configured).
+* **Chosen (17b, 2026-09-29):** two read-only endpoints, `GET /api/export/events`
+  (same filters as `/api/events`, via one shared FastAPI dependency) and
+  `GET /api/export/devices`, each `format=csv|json`, plus dashboard *Download* links.
+  * **Bounded memory:** keyset pages of 1 000 rows (`id > last`), each page in its own
+    short session — no connection or read transaction is held for the whole response,
+    and no connection is used from two threads (Starlette iterates a sync generator
+    in its thread pool). Measured: server peak RSS 83 MiB for 25 k and for 250 k rows.
+  * **Snapshot:** the highest id is fixed when the request arrives (also making a
+    database outage a 503 instead of a broken file); rows stored later are excluded.
+  * **Order:** storage order (id), oldest first — the natural reading order for a review.
+  * **CSV:** RFC 4180 (`csv` module, `\r\n`), UTF-8 with BOM for Excel on Windows;
+    formula-like cells prefixed with `'` (OWASP CSV-injection advice), also after
+    leading whitespace. Interface names arrive through ingest unvalidated beyond
+    length, so this is a real path, not theory (verified: `=cmd|…` was accepted).
+  * **JSON:** one array, written in chunks of 1 000 items (one chunk per item was 5×
+    slower: 2.9 k vs 14 k rows/s at 250 k rows).
+* **Rejected:** a CLI `export` reading the database directly (a second read path to
+  keep correct; the endpoints already work from a browser, curl or PowerShell while
+  Hound runs); NDJSON (less usable in spreadsheet tools); a `sep=` line for
+  semicolon-locale Excel (breaks every other CSV reader).
+* **Consequences:** an export of 250 k rows keeps one thread-pool worker busy ~20 s;
+  a CSV cut off by a mid-export database error is not self-evidently incomplete (only
+  the server log says so). Both accepted for a local, single-user tool.

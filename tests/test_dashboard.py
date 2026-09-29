@@ -329,6 +329,35 @@ def test_clicking_a_device_opens_its_profile(settings: Settings, make_event: Eve
     run(scenario)
 
 
+# --------------------------------------------------------------------------- downloads (17b)
+
+
+def test_download_links_follow_the_feed_filter(settings: Settings, make_event: EventFactory) -> None:
+    async def scenario() -> None:
+        async with open_dashboard(settings, make_event) as h:
+            page = h.page
+            href = {fmt: lambda fmt=fmt: page.export_events[fmt].props["href"] for fmt in ("csv", "json")}
+            assert href["csv"]() == "/api/export/events?format=csv"
+            assert href["json"]() == "/api/export/events?format=json"
+            await page._set_min_level("suspicious")
+            assert href["csv"]() == "/api/export/events?format=csv&min_risk_level=suspicious"
+            await page._set_min_level("safe")
+            assert href["json"]() == "/api/export/events?format=json"
+            devices = h.user.find(marker="download-devices-csv").elements.pop()
+            assert devices.props["href"] == "/api/export/devices?format=csv" and "download" in devices.props
+
+            # the links point at endpoints that exist and honour the filter
+            http = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=create_app(settings, h.runtime)), base_url="http://127.0.0.1"
+            )
+            async with http:
+                every = (await http.get("/api/export/events?format=json")).json()
+                risky = (await http.get("/api/export/events?format=json&min_risk_level=suspicious")).json()
+            assert len(every) == 3 and [e["domain"] for e in risky] == ["bad.example"]
+
+    run(scenario)
+
+
 # --------------------------------------------------------------------------- coverage (ADR-026)
 
 
