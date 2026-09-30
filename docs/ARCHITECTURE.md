@@ -63,11 +63,15 @@ tested · extension points. File references are to the current code.
 * **In → out:** raw frames → `NetworkEvent` via an `EventSink` callable (non-blocking `offer`).
 * **Depends on:** Scapy, OS capture layer (libpcap / Npcap / BPF), `PacketParser`.
 * **Failure modes:** permission denied; interface missing or disappears; libpcap missing
-  (falls back to user-space filtering for the default filter); invalid BPF; sniffer thread
-  dies (supervisor marks state `error`, surfaced in `/health`); loopback duplicates
-  (de-duplicated, ADR-014).
-* **Tests:** `tests/test_capture.py` with a fake `AsyncSniffer` (no root). Real capture
-  verified manually on Linux loopback only.
+  (falls back to user-space filtering for the default filter); invalid BPF; loopback
+  duplicates (de-duplicated, ADR-014). **Sniffer dies while running** (ADR-030: Scapy ends
+  quietly with "Network is down" when the interface goes down or disappears): the
+  supervisor sets state `restarting`, re-reads the interface list and relaunches with the
+  same filter mode after 1, 2, 4 … s (max 60 s) until it works or `stop()` is called;
+  counts `restarts` and `downtime_seconds` (`SourceStatus`, daemon report, metrics).
+  `restart=False` keeps the old behaviour (state `error`). Start-up failures still raise.
+* **Tests:** `tests/test_capture.py` with a fake `AsyncSniffer` (no root). Real capture:
+  Linux loopback, and a veth interface taken down/up and deleted/re-created (s19).
 * **Extension points:** multiple interfaces (one service per interface feeding the same
   queue); pcap-file replay source (Scapy `offline=`) for regression tests.
 

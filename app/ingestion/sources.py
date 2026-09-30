@@ -11,7 +11,7 @@ from typing import Literal, Protocol
 
 from app.models.events import NetworkEvent
 
-SourceStateName = Literal["idle", "starting", "running", "stopped", "error"]
+SourceStateName = Literal["idle", "starting", "running", "restarting", "stopped", "error"]
 
 EventSink = Callable[[NetworkEvent], bool]
 """Callable that accepts an event without blocking; returns ``False`` if it was dropped."""
@@ -26,6 +26,10 @@ class SourceStatus:
     packets_parsed: int = 0
     packets_ignored: int = 0
     packets_malformed: int = 0
+    restarts: int = 0
+    """Times the source recovered, or tried to, after failing while running."""
+    downtime_seconds: float = 0.0
+    """Time spent not capturing between such a failure and recovery (includes an ongoing outage)."""
 
 
 class EventSource(Protocol):

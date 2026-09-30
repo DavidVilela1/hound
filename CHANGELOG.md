@@ -7,6 +7,11 @@ All notable changes to Hound are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Capture recovers by itself** (ADR-030): when the interface goes down or disappears
+  while capturing (Wi-Fi drop, sleep, unplugged adapter), capture restarts as soon as it
+  is back (retries after 1, 2, 4 … s, then every minute) instead of the daemon exiting.
+  Restarts and time without capture appear in `/api/metrics`
+  (`daemon.capture_restarts`, `daemon.capture_downtime_seconds`).
 - **Real country data** (ADR-029): the free DB-IP "IP to Country Lite" database is
   downloaded automatically at start and refreshed monthly (hot-swapped, no restart);
   `python run.py geo status|update`; the Countries tab credits "IP Geolocation by DB-IP"
@@ -40,6 +45,10 @@ All notable changes to Hound are recorded here. The format follows
   deletes), and a device whose last stored event was deleted is removed.
 
 ### Fixed
+- A Wi-Fi drop, sleep or any moment the capture interface went down ended capture for
+  good: Scapy stops quietly ("Network is down"), and the capture daemon then exited with
+  code 3 and a vague "capture thread exited unexpectedly". Now it restarts (see Added)
+  and names the cause ("went down or disappeared").
 - When deleting old events failed (e.g. the database was briefly locked), the batch that
   had just been stored was reported as lost ("batch dropped", counted in the loss
   metrics) and not shown live on the dashboard. Retention now runs separately from

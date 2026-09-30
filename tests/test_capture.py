@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import logging
 import threading
 from typing import Any
 
@@ -132,8 +133,8 @@ def test_missing_libpcap_falls_back_to_userspace_filter(fake_sniffer: type[FakeS
         FakeSniffer.start = original_start  # type: ignore[method-assign]
 
 
-def test_supervisor_detects_dead_sniffer(fake_sniffer: type[FakeSniffer]) -> None:
-    service = PacketCaptureService("eth0", "udp port 53", lambda e: True, supervise_interval=0.05)
+def test_supervisor_detects_dead_sniffer_when_restarts_are_off(fake_sniffer: type[FakeSniffer]) -> None:
+    service = PacketCaptureService("eth0", "udp port 53", lambda e: True, supervise_interval=0.05, restart=False)
     service.start()
     sniffer = fake_sniffer.instances[0]
     sniffer.exception = OSError(errno.ENODEV, "No such device")
@@ -145,6 +146,130 @@ def test_supervisor_detects_dead_sniffer(fake_sniffer: type[FakeSniffer]) -> Non
     assert service.status().state == "error"
     assert "not available" in (service.status().error or "")
     service.stop()
+
+
+# --------------------------------------------------------------------------- recovery (ADR-030)
+def wait_for(condition: Any, timeout: float = 5.0) -> bool:
+    deadline = threading.Event()
+    for _ in range(int(timeout / 0.02)):
+        if condition():
+            return True
+        deadline.wait(0.02)
+    return bool(condition())
+
+
+@pytest.fixture
+def reloads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+    monkeypatch.setattr(capture_mod, "_reload_interfaces", lambda: calls.append(1))
+    return calls
+
+
+def fast_service(**kwargs: Any) -> PacketCaptureService:
+    return PacketCaptureService(
+        "eth0", "udp port 53", lambda e: True, supervise_interval=0.02, restart_delay=0.05, **kwargs
+    )
+
+
+def kill(sniffer: FakeSniffer, exc: BaseException | None = None) -> None:
+    """End the fake sniffer the way Scapy does: with an exception, or quietly (interface down)."""
+    sniffer.exception = exc
+    sniffer.stop()
+
+
+def test_capture_restarts_after_the_interface_goes_down(fake_sniffer: type[FakeSniffer], reloads: list[int]) -> None:
+    service = fast_service()
+    service.start()
+    kill(fake_sniffer.instances[0])  # Scapy's "Network is down": thread ends, no exception
+    assert wait_for(lambda: len(fake_sniffer.instances) == 2 and service.status().state == "running")
+    status = service.status()
+    assert status.restarts == 1 and status.downtime_seconds >= 0 and status.error is None
+    assert fake_sniffer.instances[1].kwargs["filter"] == "udp port 53"  # same capture as before
+    assert reloads  # the interface list was re-read before relaunching
+    kill(fake_sniffer.instances[1], OSError(errno.ENETDOWN, "Network is down"))
+    assert wait_for(lambda: service.status().restarts == 2 and service.status().state == "running")
+    service.stop()
+    assert service.status().state == "stopped"
+
+
+def test_restarting_is_visible_and_retries_until_the_interface_returns(
+    fake_sniffer: type[FakeSniffer], reloads: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    present: list[InterfaceInfo] = []  # the adapter is gone (sleep, Wi-Fi off, unplugged)
+    service = fast_service(restart_max_delay=0.1)
+    service.start()
+    monkeypatch.setattr(capture_mod, "list_interfaces", lambda: list(present))
+    kill(fake_sniffer.instances[0])
+    assert wait_for(lambda: service.status().state == "restarting")
+    status = service.status()
+    assert status.error and "went down or disappeared" in status.error and "automatically" in status.error
+    assert wait_for(lambda: len(reloads) >= 3)  # keeps trying, with growing delays capped at the maximum
+    assert len(fake_sniffer.instances) == 1  # nothing launched while the interface is missing
+    assert service.status().downtime_seconds >= 0.1  # an ongoing outage is already counted
+    present.append(InterfaceInfo("eth0", "Ethernet", "192.168.1.10", None))  # it is back
+    assert wait_for(lambda: service.status().state == "running")
+    assert len(fake_sniffer.instances) == 2 and service.status().restarts == 1
+    service.stop()
+
+
+def test_failed_restarts_back_off_up_to_the_maximum(
+    fake_sniffer: type[FakeSniffer],
+    reloads: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """1, 2, 4 … seconds then once a minute in real use; scaled down here."""
+    service = fast_service(restart_max_delay=0.2)
+    service.start()
+    monkeypatch.setattr(capture_mod, "list_interfaces", lambda: [])
+    with caplog.at_level(logging.WARNING, logger=capture_mod.__name__):
+        kill(fake_sniffer.instances[0])
+        assert wait_for(lambda: len(reloads) >= 4)
+        service.stop()
+    delays = [r.retry_in_seconds for r in caplog.records if hasattr(r, "retry_in_seconds")]  # type: ignore[attr-defined]
+    assert delays[:4] == [0.1, 0.2, 0.2, 0.2]
+
+
+def test_stop_while_restarting(
+    fake_sniffer: type[FakeSniffer], reloads: list[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = fast_service(restart_max_delay=0.05)
+    service.start()
+    monkeypatch.setattr(capture_mod, "list_interfaces", lambda: [])
+    kill(fake_sniffer.instances[0])
+    assert wait_for(lambda: service.status().state == "restarting")
+    threading.Event().wait(0.1)
+    service.stop()  # returns promptly; the supervisor ends
+    status = service.status()
+    assert status.state == "stopped" and status.error is None
+    assert status.restarts == 1 and status.downtime_seconds >= 0.1
+    assert service._supervisor is None
+
+
+def test_a_restart_keeps_the_user_space_filter(fake_sniffer: type[FakeSniffer], reloads: list[int]) -> None:
+    from app.core.config import DEFAULT_BPF_FILTER
+
+    fake_sniffer.fail_with = ImportError("libpcap is not available. Cannot compile filter !")
+    original_start = FakeSniffer.start
+
+    def start_without_bpf(self: FakeSniffer) -> None:
+        if "filter" not in self.kwargs:
+            FakeSniffer.fail_with = None
+        original_start(self)
+
+    FakeSniffer.start = start_without_bpf  # type: ignore[method-assign]
+    try:
+        service = PacketCaptureService(
+            "eth0", DEFAULT_BPF_FILTER, lambda e: True, supervise_interval=0.02, restart_delay=0.05
+        )
+        service.start()
+        kill(fake_sniffer.instances[-1])
+        assert wait_for(lambda: service.status().restarts == 1 and service.status().state == "running")
+        relaunched = fake_sniffer.instances[-1]
+        assert "filter" not in relaunched.kwargs and "lfilter" in relaunched.kwargs
+        service.stop()
+    finally:
+        FakeSniffer.start = original_start  # type: ignore[method-assign]
 
 
 @pytest.mark.parametrize(

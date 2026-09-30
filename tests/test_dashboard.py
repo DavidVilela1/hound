@@ -490,6 +490,13 @@ def test_pipeline_states_are_explained(settings: Settings, make_event: EventFact
             assert "no permission" in page.info_banner.text and page.info_banner.visible
             assert page.source_badge.props["color"] == "negative"
 
+            page._render_pipeline(
+                {"mode": "capture", "source_state": "restarting", "source_error": "Wi-Fi went down. Restarting"}
+            )
+            assert page.kpi_status.text == "Reconnecting" and page.info_banner.visible
+            assert "Capture interrupted: Wi-Fi went down" in page.info_banner.text
+            assert page.source_badge.props["color"] == "warning"
+
             page._render_pipeline({"mode": "demo", "source_state": "running"})
             assert page.kpi_status.text == "Demo" and "nothing is captured" in page.info_banner.text
 

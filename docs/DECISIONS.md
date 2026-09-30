@@ -522,3 +522,29 @@ change their status or add a "Revisited" note.
   blocks download.db-ip.com); tests use `.mmdb` files written by `tests/mmdb.py` and
   read by the real reader (C extension and pure Python). The owner's first run is the
   first real download.
+
+## ADR-030 — Capture restarts itself when the interface fails while running
+* **Context:** before the week-long laptop trial, a check on Linux showed that Scapy's
+  sniffer ends *quietly* (no exception, only a "Network is down" warning) when the
+  interface goes down or disappears — even briefly — and never resumes. The supervisor
+  then set state `error`, and the capture daemon exited with code 3: one Wi-Fi drop or
+  sleep ended capture until someone noticed. Reproduced with the previous build on a veth
+  interface (link down → "capture thread exited unexpectedly", exit 3).
+* **Chosen (s19):** `PacketCaptureService` recovers by itself: new state `restarting`
+  (with the reason), interface list re-read (`conf.ifaces.reload()`) and the interface
+  re-resolved on every attempt, same filter mode (BPF or user-space fallback) relaunched,
+  retries after 1, 2, 4 … s capped at 60 s, indefinitely until stopped. Counted as
+  `restarts` and `downtime_seconds`, sent in the daemon report
+  (`capture_restarts`, `capture_downtime_seconds`) and shown in `/api/metrics`; the
+  dashboard shows *Reconnecting* for all-in-one capture. The daemon exits only on
+  `error`, i.e. start-up failures (exit 2) or `restart=False`.
+* **Rejected:** exiting and relying on an external restarter (no service manager yet —
+  Phase 21 — so on Windows nothing would restart it); giving up after N attempts (a
+  laptop may be asleep for hours; the retry costs one attempt a minute).
+* **Consequences:** a misconfigured-but-running capture (interface permanently gone)
+  now retries forever with one warning per minute instead of exiting; the reason is in
+  the log and in `/health`. Traffic during an outage is not seen and is not counted as
+  lost — the downtime counter is the measure. In split mode the server learns about
+  restarts only with the next batch (reports ride on batches), so the dashboard does not
+  show a daemon that is currently reconnecting. Windows/Npcap behaviour on sleep is not
+  yet observed (the field trial will).

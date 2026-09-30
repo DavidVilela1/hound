@@ -5,21 +5,22 @@
 > Architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md) · Decisions: [`DECISIONS.md`](DECISIONS.md)
 
 ```text
-Last updated:      2026-09-29 (session 18: 16f real geolocation, owner request)
+Last updated:      2026-09-30 (session 19: 16g capture restarts itself after interface failures)
 Current milestone: M7 — Field-validated (M0–M6 reached; M2 on Linux + Windows)
-Current phase:     Phase 16 — 16a–16c, 16e, 16f done; 16d field trial next (owner, week
+Current phase:     Phase 16 — 16a–16c, 16e–16g done; 16d field trial next (owner, week
                    of 2026-10-05, laptop-only position; procedure in docs/FIELD_TRIAL.md).
                    Phase 17: 17a–17c done, 17d open
 Current task:      none in progress
 Next task:         17d periodic PRAGMA optimize (engineering); 16d is the owner's
-Overall state:     Hound 1.0.0 (MIT) + unreleased 16e, 16f, 17b, 17c: capture (split mode,
-                   Linux + Windows), enrichment with real countries (DB-IP Lite, automatic
-                   monthly download), explainable risk with allowlist and a tunable,
-                   reloadable risk file, API, live dashboard with coverage line and
-                   downloads, CSV/JSON export, retention by count and age, metrics,
-                   doctor, backup/restore, benchmark. Linux: 519 tests pass (Py 3.11 +
-                   3.13, from the lock). A real DB-IP download is NOT verified yet (the
-                   sandbox blocks download.db-ip.com) — the owner's first start is.
+Overall state:     Hound 1.0.0 (MIT) + unreleased 16e–16g, 17b, 17c: capture (split mode,
+                   Linux + Windows) that restarts itself after interface outages,
+                   enrichment with real countries (DB-IP Lite, automatic monthly
+                   download), explainable risk with allowlist and a tunable, reloadable
+                   risk file, API, live dashboard with coverage line and downloads,
+                   CSV/JSON export, retention by count and age, metrics, doctor,
+                   backup/restore, benchmark. Linux: 525 tests pass (Py 3.11 + 3.13, from
+                   the lock). Not yet verified on the owner's machine: a real DB-IP
+                   download, and capture recovery on Windows/Npcap after sleep.
 ```
 
 ## 1. Baseline assessment
@@ -40,7 +41,7 @@ Enrichment      VERIFIED*       Blocklist (suffix matching), DB-IP Lite countrie
 Risk engine     VERIFIED*       13 deterministic signals; not yet tuned on real traffic
 Frontend        VERIFIED        16 page-level tests against the real API (dashboard.py 96 %);
                                 visuals checked manually (coverage line: screenshots s15)
-Testing         VERIFIED*       519 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
+Testing         VERIFIED*       525 tests, 94% line coverage; all pass on Linux (Py 3.11 + 3.13);
                                 Windows 292 + 3 expected skips (owner); CI green (owner report)
 Configuration   VERIFIED        HOUND_* env/.env/CLI, validated; .env.example parses
 Security        FUNCTIONAL      Least privilege, loopback, Host/Origin checks, token ingest;
@@ -55,6 +56,14 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 
 | Date | Check | Platform | Result |
 |---|---|---|---|
+| 2026-09-30 s19 | Baseline `pytest`; repo = last delivered zip | Linux, Py 3.11 | 519 passed |
+| 2026-09-30 s19 | **Real Scapy on a veth interface** (root in the sandbox; `ip link` via iproute2) | Linux, Scapy 2.7 | link **down** or interface **deleted** → Scapy logs "Network is down", closes the socket and the sniffer thread ends with **no exception**; it does not resume when the link comes back |
+| 2026-09-30 s19 | **Previous build** (daemon) on the same outage | Linux | "Packet capture stopped unexpectedly … capture thread exited unexpectedly" → daemon **exit 3** |
+| 2026-09-30 s19 | New `PacketCaptureService` on the real veth: DNS before → link down 4 s → up → DNS; then interface deleted 5 s → re-created → DNS | Linux | state `restarting` with "went down or disappeared"; 2 failed attempts each ("Network is down"), then "Packet capture resumed"; all 3 queries captured; `restarts` 2, `downtime_seconds` 14.5 |
+| 2026-09-30 s19 | **Real split mode**: server + `python run.py capture -i vh0` (separate processes), link down 6 s → up | Linux | daemon stayed up; events before and after stored (2); `/api/metrics` `daemon.capture_restarts` 1, `capture_downtime_seconds` 7.39, `total_events_lost` 0 |
+| 2026-09-30 s19 | Mutation check (13: no restart, interfaces not re-read, filter mode lost, no backoff growth, no backoff cap, restarts not counted, ongoing outage not counted, stale error after stop, daemon exits while restarting, restarts not reported, dashboard hides restarting, quiet end treated as generic) — each under `timeout` | Py 3.11 | first pass: "no backoff growth" **survived** → backoff test added; then 13/13 caught |
+| 2026-09-30 s19 | `tests/test_capture.py` + `tests/test_daemon.py` repeated 5× (timing-based tests) | lock venv 3.13 | 26/26 each run |
+| 2026-09-30 s19 | `pytest` (dev env / fresh 3.11 lock / fresh 3.13 lock); ruff; mypy 2.3.1 ×3 platforms + 3.11 lock; compileall; smoke | Linux | 525 / 525 / 525 passed; clean; smoke all passed; 0 ResourceWarnings in `test_capture.py` |
 | 2026-09-29 s18 | Data source facts (web): DB-IP Country Lite — CC BY 4.0, monthly, CSV + MMDB, `download.db-ip.com/free/dbip-country-lite-YYYY-MM.mmdb.gz`, ~717 k records; MaxMind GeoLite2 needs account + key and 30-day deletion | db-ip.com, dev.maxmind.com | owner chose DB-IP Lite with automatic download |
 | 2026-09-29 s18 | `maxminddb` 3.2.0: licence, Python, wheels | PyPI | Apache-2.0, Python ≥ 3.10, wheels for win_amd64 and macOS arm64 (cp311, cp313) and Linux; locks regenerated — only `maxminddb` added; `pip-audit` on the runtime lock: no known vulnerabilities |
 | 2026-09-29 s18 | Real download from the sandbox | Linux | **blocked** by the sandbox's egress policy (403 at the proxy) → not verified here; the server logged one warning, kept running with countries *Unknown*, left no partial file, and did not retry within the 6 h window |
@@ -369,6 +378,15 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
   `.env.example` no longer pins `simulated`. 42 new tests (`tests/test_geoip.py` 41,
   dashboard 1), mutation-checked. Field-trial procedure written: `docs/FIELD_TRIAL.md`.
 
+- **16g Capture restarts itself (session 19, ADR-030):** `PacketCaptureService` relaunches
+  a sniffer that ends while running (interface down/gone — Scapy ends quietly), state
+  `restarting`, interface list re-read each attempt, same filter mode, retry 1→60 s until
+  stopped; `restarts`/`downtime_seconds` in `SourceStatus`, the daemon report
+  (`capture_restarts`, `capture_downtime_seconds`) and `/api/metrics`; dashboard
+  *Reconnecting*; the daemon exits only on start-up failures. 6 new tests (capture 5,
+  daemon 1) plus a dashboard assertion; verified with real Scapy on a veth interface and
+  a real server + daemon.
+
 ## 4. In progress
 - Nothing.
 
@@ -379,7 +397,7 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 2. **Owner, before the trial:** install the new zip, `pip install -r requirements.lock`
    (new `maxminddb`), **remove `HOUND_GEO_MODE=simulated` from `.env`**, start the server
    once and check `python run.py geo status` — the first real DB-IP download. Then
-   `pytest` (expect 510 passed, 5 skipped on Windows).
+   `pytest` (expect 516 passed, 5 skipped on Windows).
 3. **16d field trial** (owner, week of 2026-10-05) — follow `docs/FIELD_TRIAL.md`.
 4. Test debt: close the SQLite connections in `tests/test_migrations.py` helpers (§7).
 
@@ -424,7 +442,7 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 - The dashboard's *Devices* tile counts every address in the device table; the coverage
   check counts only local IPv4 addresses from the last 24 h. Both are correct for what
   they say, but the two numbers can differ; the coverage dialog states its own basis.
-- The test suite now takes ~35–60 s here (519 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
+- The test suite now takes ~35–60 s here (525 tests): dashboard ~14 s, daemon ~4.5 s, doctor ~3 s (2 s
   of it is the port-probe timeout against a silent listener).
   Acceptable; if it keeps growing, add an opt-in `slow` marker for the UI/daemon files.
 - The dashboard tests call a few private methods (`_load_stats`, `_stats_tick`,
@@ -443,6 +461,10 @@ Packaging       VERIFIED        Hash-checked universal locks (ADR-019), CHANGELO
 - Countries are approximate: DB-IP Lite, country level (DB-IP states ~81 % accuracy);
   anycast/VPN/cloud addresses show where they are registered. *Unknown* until the first
   download succeeds; simulated only in demo mode.
+- Capture recovery (ADR-030) is verified on Linux only; on Windows/Npcap, whether sleep
+  ends the capture (and how it resumes) is observed first in the field trial. While
+  the split-mode daemon is reconnecting the dashboard cannot show it (its reports ride
+  on event batches); `/api/metrics` shows restarts and downtime once it resumes.
 - Hound makes one outbound HTTPS request per month (download.db-ip.com) unless
   `HOUND_GEOIP_AUTO_UPDATE=false`.
 - Only traffic visible to the capture interface is seen (switched/Wi-Fi networks); what

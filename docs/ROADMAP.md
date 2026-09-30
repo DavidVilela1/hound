@@ -296,8 +296,8 @@ M6 stays open until its exit criteria are met.*
   file — **DONE** (ADR-022) · 16c blocklist/allowlist/risk-settings reload without restart
   — **DONE** (ADR-023) · 16e deployment positions — **DONE** (ADR-026) · 16f real
   geolocation (DB-IP Lite, automatic updates) — **DONE** (ADR-029, owner request before
-  the trial) · **16d field trial + tuning ← next in this phase** (procedure:
-  `docs/FIELD_TRIAL.md`) (needs the owner's monitoring position; owner
+  the trial) · 16g capture restarts itself after interface failures — **DONE** (ADR-030)
+  · **16d field trial + tuning ← next in this phase** (procedure: `docs/FIELD_TRIAL.md`) (needs the owner's monitoring position; owner
   plans it for the week of 2026-10-05).
 * **16e outcome (2026-09-29):** `HOUND_DEPLOYMENT_POSITION` (`this_computer`, `gateway`,
   `mirror`, `dns_server`; default `auto`); `app/services/coverage.py` states what each

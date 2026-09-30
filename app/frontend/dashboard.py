@@ -279,11 +279,17 @@ class DashboardPage:
         mode, state = pipeline.get("mode", "idle"), pipeline.get("source_state", "idle")
         self.mode_badge.set_text(f"mode: {mode}")
         self.source_badge.set_text(f"source: {state}")
-        color = {"running": "positive", "error": "negative", "idle": "blue-grey"}.get(state, "grey")
+        color = {"running": "positive", "restarting": "warning", "error": "negative", "idle": "blue-grey"}.get(
+            state, "grey"
+        )
         self.source_badge.props(f"color={color}")
         if state == "error":
             self.kpi_status.set_text("Degraded")
             self.info_banner.set_text(f"Event source problem: {pipeline.get('source_error') or 'unknown error'}")
+            self.info_banner.set_visibility(True)
+        elif state == "restarting":
+            self.kpi_status.set_text("Reconnecting")
+            self.info_banner.set_text(f"Capture interrupted: {pipeline.get('source_error') or 'interface down'}")
             self.info_banner.set_visibility(True)
         elif mode == "demo":
             self.kpi_status.set_text("Demo")

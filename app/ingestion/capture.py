@@ -6,8 +6,10 @@ Threading model::
 
 The Scapy callback does only parsing and a non-blocking enqueue; database work
 happens elsewhere, so a slow consumer cannot stall capture. A lightweight
-supervisor thread watches the sniffer and records failures (e.g. an interface
-going away) so they are visible in ``/health`` instead of dying silently.
+supervisor thread watches the sniffer: when it dies while running (an interface going
+down or away — Wi-Fi drop, sleep, unplugged adapter) it restarts capture with growing
+delays until it works again, and counts the restarts and the time without capture
+(ADR-030). Failures are visible in ``/health`` and the metrics instead of dying silently.
 """
 
 from __future__ import annotations
@@ -31,6 +33,19 @@ from app.ingestion.sources import EventSink, SourceStateName, SourceStatus
 logger = logging.getLogger(__name__)
 
 TCP_FLAG_SYN = 0x02
+
+
+RESTART_FIRST_DELAY = 1.0
+RESTART_MAX_DELAY = 60.0
+"""A failed restart is retried after 1, 2, 4 … seconds, then every minute, until stopped."""
+
+
+def _reload_interfaces() -> None:
+    """Refresh Scapy's cached interface list (an adapter may have been re-created)."""
+    try:
+        conf.ifaces.reload()
+    except Exception as exc:  # best effort: resolve_interface() reports what is really missing
+        logger.debug("Could not reload the interface list", extra={"error": str(exc)})
 
 
 class CaptureError(RuntimeError):
@@ -170,6 +185,9 @@ class PacketCaptureService:
         parser: PacketParser | None = None,
         startup_timeout: float = 5.0,
         supervise_interval: float = 2.0,
+        restart: bool = True,
+        restart_delay: float = RESTART_FIRST_DELAY,
+        restart_max_delay: float = RESTART_MAX_DELAY,
     ) -> None:
         self._requested_interface = interface
         self._interface: str | None = interface
@@ -180,6 +198,13 @@ class PacketCaptureService:
         self._supervise_interval = supervise_interval
         self._sniffer: AsyncSniffer | None = None
         self._active_filter: str | None = None
+        self._lfilter: object = None
+        self._restart = restart
+        self._restart_delay = restart_delay
+        self._restart_max_delay = restart_max_delay
+        self._restarts = 0
+        self._downtime = 0.0
+        self._down_since: float | None = None
         self._dedupe: LoopbackDeduplicator | None = None
         self._stop = threading.Event()
         self._supervisor: threading.Thread | None = None
@@ -247,6 +272,7 @@ class PacketCaptureService:
             logger.warning("Capture start-up confirmation timed out; continuing", extra={"interface": self._interface})
         self._sniffer = sniffer
         self._active_filter = bpf_filter
+        self._lfilter = lfilter
 
     def stop(self) -> None:
         self._stop.set()
@@ -260,6 +286,8 @@ class PacketCaptureService:
             self._supervisor.join(timeout=5)
             self._supervisor = None
         with self._lock:
+            if self._state == "restarting":
+                self._error = None  # stopped on purpose; the outage is still counted in downtime
             if self._state != "error":
                 self._state = "stopped"
         logger.info("Packet capture stopped", extra={"interface": self._interface})
@@ -281,14 +309,59 @@ class PacketCaptureService:
     def _supervise(self) -> None:
         while not self._stop.wait(self._supervise_interval):
             sniffer = self._sniffer
-            if sniffer is None or sniffer.thread is None:
+            if sniffer is None or sniffer.thread is None or sniffer.thread.is_alive():
                 continue
-            if not sniffer.thread.is_alive():
-                exc = sniffer.exception or RuntimeError("capture thread exited unexpectedly")
-                message = describe_capture_error(exc, self._interface or "?")
+            if sniffer.exception is None:
+                # Scapy ends the capture quietly when the interface goes down or disappears
+                # ("Network is down"): Wi-Fi drops, sleep, a cable pulled, an adapter reset.
+                message = f"Network interface {self._interface!r} went down or disappeared."
+            else:
+                message = describe_capture_error(sniffer.exception, self._interface or "?")
+            if not self._restart:
                 self._fail(message)
                 logger.error("Packet capture stopped unexpectedly", extra={"reason": message})
                 return
+            self._recover(message)
+
+    def _recover(self, reason: str) -> None:
+        """Relaunch the sniffer with growing delays until it runs again or stop() is called.
+
+        The interface list is re-read each time, because an adapter that comes back (after
+        sleep, a Wi-Fi reconnect or re-plugging) may have been re-created by the OS.
+        """
+        self._restarts += 1
+        self._down_since = time.monotonic()
+        with self._lock:
+            self._state = "restarting"
+            self._error = f"{reason} Restarting capture automatically."
+        logger.error("Packet capture interrupted; restarting automatically", extra={"reason": reason})
+        delay = self._restart_delay
+        attempt = 0
+        while not self._stop.wait(delay):
+            attempt += 1
+            try:
+                _reload_interfaces()
+                self._interface = resolve_interface(self._requested_interface)
+                self._launch(self._active_filter, lfilter=self._lfilter)
+            except CaptureError as exc:
+                delay = min(delay * 2, self._restart_max_delay)
+                logger.warning(
+                    "Capture restart failed; retrying",
+                    extra={"attempt": attempt, "reason": str(exc), "retry_in_seconds": delay},
+                )
+                continue
+            down = time.monotonic() - self._down_since
+            self._downtime += down
+            self._down_since = None
+            self._set_state("running")
+            logger.info(
+                "Packet capture resumed",
+                extra={"interface": self._interface, "down_seconds": round(down, 1), "attempts": attempt},
+            )
+            return
+        # stop() was called while recovering
+        self._downtime += time.monotonic() - self._down_since
+        self._down_since = None
 
     def _set_state(self, state: SourceStateName) -> None:
         with self._lock:
@@ -312,4 +385,10 @@ class PacketCaptureService:
                 packets_parsed=stats.parsed if stats else 0,
                 packets_ignored=stats.ignored if stats else 0,
                 packets_malformed=stats.malformed if stats else 0,
+                restarts=self._restarts,
+                downtime_seconds=round(self._current_downtime(), 2),
             )
+
+    def _current_downtime(self) -> float:
+        down_since = self._down_since
+        return self._downtime + (time.monotonic() - down_since if down_since is not None else 0.0)

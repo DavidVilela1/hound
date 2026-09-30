@@ -93,7 +93,7 @@ class RiskLevelCounts(BaseModel):
     dangerous: int = 0
 
 
-SourceState = Literal["idle", "starting", "running", "stopped", "error"]
+SourceState = Literal["idle", "starting", "running", "restarting", "stopped", "error"]
 RunModeName = Literal["idle", "demo", "capture"]
 
 
@@ -179,6 +179,12 @@ class DaemonReport(BaseModel):
     packets_parsed: Counter = 0
     packets_malformed: Counter = 0
     queue_dropped: Counter = Field(default=0, description="Events lost because the daemon's queue was full.")
+    capture_restarts: Counter = Field(
+        default=0, description="Automatic capture restarts (interface went down, e.g. Wi-Fi drop or sleep)."
+    )
+    capture_downtime_seconds: float = Field(
+        default=0.0, ge=0, le=10**9, description="Time without capture while restarting (traffic then is not seen)."
+    )
     queue_high_water: Counter = 0
     queue_capacity: Counter = 0
     events_forwarded: Counter = 0
@@ -235,6 +241,8 @@ class CaptureMetrics(BaseModel):
     source: str | None
     packets_parsed: int
     packets_malformed: int
+    restarts: int = Field(default=0, description="Automatic capture restarts after the interface failed.")
+    downtime_seconds: float = Field(default=0.0, description="Time without capture during those failures.")
 
 
 class DaemonMetrics(DaemonReport):

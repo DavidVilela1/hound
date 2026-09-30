@@ -491,6 +491,19 @@ closed local ports; they appear in the dashboard within a second, and
 `curl http://127.0.0.1:8000/api/metrics` shows the daemon's counters with
 `"total_events_lost": 0`.
 
+### When the network drops (Wi-Fi, sleep, unplugged cable)
+
+If the capture interface goes down or disappears while Hound is capturing — Wi-Fi
+disconnects, the laptop sleeps, an adapter is unplugged — capture **restarts by
+itself** as soon as the interface is back: it retries after 1, 2, 4 … seconds, then
+once a minute, re-reading the interface list each time. You do not need to restart
+the capture window. The daemon logs "Packet capture interrupted; restarting
+automatically" and "Packet capture resumed … down_seconds=…". Traffic during the
+outage is not seen (it never reached Hound); `GET /api/metrics` counts it as
+`daemon.capture_restarts` and `daemon.capture_downtime_seconds` (for all-in-one
+capture: `capture.restarts`, `capture.downtime_seconds`). Only a failure at start-up
+(wrong interface name, no permission) still stops the daemon, with exit code 2.
+
 ### Command summary
 
 | Command | What runs | Privileges |

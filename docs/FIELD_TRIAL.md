@@ -37,16 +37,19 @@
      `python run.py reload`);
    * <http://127.0.0.1:8000/api/metrics>: `loss.total_events_lost` is `0`.
 6. Start a **trial log** (a spreadsheet is fine) with two sheets:
-   * **Days:** date · hours running · restarts/sleeps · `total_events_lost` · events that
-     day · notes (errors, Wi-Fi changes, VPN on/off).
+   * **Days:** date · hours running · sleeps · `capture_restarts` / `capture_downtime_seconds`
+     · `total_events_lost` · events that day · notes (errors, Wi-Fi changes, VPN on/off).
    * **Flagged:** event id · time · domain/destination · level · reason codes · verdict
      (*real concern* / *false positive* / *unsure*) · why · action taken.
 
 ## Every day (5 minutes)
 
-1. **Is it capturing?** The *Last minute* tile moves while you browse. After the laptop
-   **wakes from sleep** or **changes Wi-Fi**, check again — if it stopped, restart the
-   capture window and write it in the log (this is exactly what the trial must find).
+1. **Is it capturing?** The *Last minute* tile moves while you browse. Capture restarts
+   by itself after Wi-Fi drops or sleep (README §11) — check that it did after the laptop
+   **wakes from sleep** or **changes Wi-Fi**, and note `daemon.capture_restarts` and
+   `daemon.capture_downtime_seconds` from `/api/metrics`. If it did **not** resume
+   within about a minute of the network being back, restart the capture window and write
+   down exactly what happened — that is a finding.
 2. **Did we lose anything?** Open `/api/metrics`; note `loss.total_events_lost` (counters
    restart at zero when the server restarts — note restarts).
 3. **Review what was flagged since yesterday:** download
@@ -78,8 +81,9 @@
 
 ## What a laptop-only trial proves — and what it does not
 
-* **Proves:** Hound runs for a week on Windows with real traffic; capture survives (or
-  does not survive) sleep and network changes; losses are measured; the risk signals'
+* **Proves:** Hound runs for a week on Windows with real traffic; automatic capture
+  recovery after sleep and network changes works on Windows/Npcap (verified so far only
+  on Linux); losses are measured; the risk signals'
   false-positive rate on real browsing; real countries; export and review workflow.
 * **Does not prove:** anything about other devices — they are invisible from a laptop
   (README §9 *Where to run Hound*). A household-wide trial needs a machine that sees the

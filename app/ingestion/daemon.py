@@ -68,6 +68,8 @@ class CaptureDaemon:
             "packets_parsed": status.packets_parsed,
             "packets_malformed": status.packets_malformed,
             "queue_dropped": q.dropped,
+            "capture_restarts": status.restarts,
+            "capture_downtime_seconds": status.downtime_seconds,
             "queue_high_water": q.high_water,
             "queue_capacity": q.capacity,
             "events_forwarded": f.sent,
@@ -107,7 +109,7 @@ class CaptureDaemon:
         try:
             while not self._stop.wait(STATUS_POLL_SECONDS):
                 status = self._capture.status()
-                if status.state == "error":
+                if status.state == "error":  # "restarting" is not an error: capture recovers by itself
                     logger.error("Capture failed: %s", status.error)
                     exit_code = 3
                     break
@@ -123,6 +125,8 @@ class CaptureDaemon:
                             "queue_drops": q.dropped,
                             "forwarded": self._forwarder.stats.sent,
                             "forward_drops": self._forwarder.stats.dropped,
+                            "capture_restarts": status.restarts,
+                            "capture_downtime_seconds": status.downtime_seconds,
                         },
                     )
         finally:

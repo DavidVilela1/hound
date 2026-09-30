@@ -299,6 +299,7 @@ class HoundRuntime:
     def metrics(self) -> MetricsOut:
         """Every loss point and the few performance numbers that drive decisions (ROADMAP §15)."""
         status = self.pipeline_status()
+        source_status = self._source.status() if self._source is not None else None
         q = self.queue.stats()
         p = self.processor.stats()
         latency = self.processor.latency()
@@ -321,7 +322,11 @@ class HoundRuntime:
                 daemon_reported=daemon is not None,
             ),
             capture=CaptureMetrics(
-                source=status.source, packets_parsed=status.packets_parsed, packets_malformed=status.packets_malformed
+                source=status.source,
+                packets_parsed=status.packets_parsed,
+                packets_malformed=status.packets_malformed,
+                restarts=source_status.restarts if source_status else 0,
+                downtime_seconds=source_status.downtime_seconds if source_status else 0.0,
             ),
             daemon=daemon,
             ingest=IngestMetrics(

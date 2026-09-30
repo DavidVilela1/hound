@@ -123,6 +123,7 @@ class FakeCapture:
     frames: list[bytes] = []
     fail_on_start: str | None = None
     fail_after_start: str | None = None
+    restarting_after_start: bool = False
     instances: list[FakeCapture] = []
 
     def __init__(self, interface: str | None, bpf_filter: str, sink: Callable[..., bool], **_: Any) -> None:
@@ -147,6 +148,8 @@ class FakeCapture:
                 self.sink(event)
         if FakeCapture.fail_after_start:
             self.state, self.error = "error", FakeCapture.fail_after_start
+        if FakeCapture.restarting_after_start:  # e.g. Wi-Fi dropped; the real service recovers by itself
+            self.state, self.error = "restarting", "Network interface 'fake0' went down or disappeared."
 
     def stop(self) -> None:
         if self.state != "error":
@@ -162,6 +165,8 @@ class FakeCapture:
             stats.parsed,
             stats.ignored,
             stats.malformed,  # type: ignore[arg-type]
+            restarts=1 if FakeCapture.restarting_after_start else 0,
+            downtime_seconds=12.5 if FakeCapture.restarting_after_start else 0.0,
         )
 
 
@@ -169,6 +174,7 @@ class FakeCapture:
 def fake_capture(monkeypatch: pytest.MonkeyPatch) -> type[FakeCapture]:
     FakeCapture.frames, FakeCapture.instances = [], []
     FakeCapture.fail_on_start = FakeCapture.fail_after_start = None
+    FakeCapture.restarting_after_start = False
     monkeypatch.setattr(daemon_mod, "PacketCaptureService", FakeCapture)
     monkeypatch.setattr(daemon_mod, "STATUS_POLL_SECONDS", 0.05)
     return FakeCapture
@@ -238,6 +244,20 @@ def test_capture_failure_while_running_exits_3(settings: Settings, live_server: 
     run = run_daemon(settings, live_server.url, live_server.runtime.ingest_token or "")
     run.thread.join(timeout=15)
     assert run.result == [3]
+
+
+def test_a_restarting_capture_keeps_the_daemon_running_and_is_reported(
+    settings: Settings, live_server: LiveServer
+) -> None:
+    FakeCapture.frames = frames(live_server.port)
+    FakeCapture.restarting_after_start = True
+    run = run_daemon(settings, live_server.url, live_server.runtime.ingest_token or "")
+    assert wait_until(lambda: live_server.stored_events() >= EXPECTED_EVENTS)
+    time.sleep(0.3)  # several status polls while "restarting"
+    assert run.thread.is_alive()  # unlike "error", this is not a reason to exit
+    assert run.stop() == 0
+    daemon = live_server.runtime.metrics().daemon
+    assert daemon is not None and (daemon.capture_restarts, daemon.capture_downtime_seconds) == (1, 12.5)
 
 
 def test_api_down_at_start_then_recovers(settings: Settings, caplog: pytest.LogCaptureFixture) -> None:
